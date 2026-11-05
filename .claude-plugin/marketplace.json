@@ -1,0 +1,13 @@
+{
+  "name": "spoolway-companion-catalog",
+  "owner": {
+    "name": "theTestTube"
+  },
+  "plugins": [
+    {
+      "name": "spoolway-companion",
+      "source": "./claude-plugin",
+      "description": "Pipeline types, hooks and skills for running coding agents through spoolway."
+    }
+  ]
+}

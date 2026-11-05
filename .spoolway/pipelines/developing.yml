@@ -1,0 +1,189 @@
+# Developing: one ticket becomes one pull request, with the consumer's extra repositories'
+# pull requests ahead of it when the task names any. Model and effort are fixed here and
+# versioned: raise `version` when a step's model, effort or loop changes, so `spoolway eval`
+# compares like with like. A variant is a separate pipeline file. Run parameters live in the task
+# document, never here.
+
+version: "1.9"
+
+description: >-
+  One ticket becomes one pull request, with a pull request in each extra repository the task
+  names ahead of it: implement it, run the repository's checks, have an Opus review judge the diff, open
+  the pull requests, and write the run's report, filing a run report only when an objective
+  signal crosses its threshold.
+
+steps:
+  # The three `extra-` steps run the consumer's own scripts, which read the task's `repos`; the
+  # companion does not interpret it. spoolway cuts and removes the task's own worktree alone, so
+  # the first step cuts a worktree in each extra repository on the task's branch name and the last
+  # removes them. A consumer with no extra repository makes each script pass at once.
+  - id: extra-worktree
+    description: Cut a worktree on the task's branch name in each extra repository the task names.
+    run: scripts/spoolway/extra-worktree.sh
+    hide: true
+    on_pass: implement
+
+  # `implement` and `implement-spec` are user-invoked skills, so spoolway types a slash command and
+  # nothing else: one slash command per opening message, one step per skill. They are
+  # alternatives: the task's `implementer` names one and the other passes at once (`skip_steps`
+  # too), so every lap crosses both. Checks and review fail back to the first of the two. Arrivals
+  # count the first, so 3 is the first pass and two returns; the next arrival blocks.
+  - id: implement
+    description: Build the input issue with the user-invoked implement skill, in this task's worktree; passes at once when the task names the other implementer or skips it.
+    agent: claude
+    prompt: developing-implement
+    model: claude-sonnet-5-5
+    effort: medium
+    skills: mattpocock-skills:implement
+    session: true
+    loop: 3
+    on_pass: implement-spec
+
+  - id: implement-spec
+    description: Build a whole spec with the user-invoked implement-spec skill, at most two implementers at once; passes at once when the task names the other implementer or skips it.
+    agent: claude
+    prompt: developing-implement-spec
+    model: claude-sonnet-5-5
+    effort: medium
+    skills: mattpocock-skills:implement-spec
+    session: true
+    loop: 3
+    on_pass: checks
+
+  # The consumer's own checks, in its own script: typically what its CI runs, so a red CI is
+  # caught before the pull request exists. When `.spoolway/companion.env` names a pages directory,
+  # the script also runs its stale-pages gate (scripts/spoolway/pins.sh).
+  - id: checks
+    description: Run the repository's checks in the task's worktree; a failure goes back to implement.
+    run: scripts/spoolway/checks.sh
+    timeout: 45m
+    on_pass: review
+    on_fail: implement
+
+  - id: review
+    description: An Opus review of the diff against the issue and the project's standards; a failing verdict goes back to implement.
+    agent: claude
+    prompt: developing-review
+    model: claude-opus-5-5
+    effort: high
+    skills: mattpocock-skills:code-review
+    on_pass: extra-handover
+    on_fail: implement
+
+  # Before `handover`, always: a consumer whose CI resolves an extra repository by the pull
+  # request's branch name needs that branch on the remote before its own pull request exists.
+  - id: extra-handover
+    description: Push the task's branch in each extra repository and open its pull request, ahead of the task's own.
+    run: scripts/spoolway/extra-handover.sh
+    hide: true
+    on_pass: handover
+
+  # Opens the pull request, the person's checkpoint, takes spoolway's attribution trailer off
+  # its body, and says there which extra pull requests merge first. No pull
+  # request on the branch afterwards fails the step (blocked).
+  - id: handover
+    description: Squash, push and open the task's pull request, with no AI attribution in its body.
+    run: scripts/spoolway/handover.sh
+    hide: true
+    on_pass: pin
+
+  # Page pins, when `.spoolway/companion.env` names a pages directory; otherwise the step passes
+  # at once. The pin goes on a commit already on the branch, never the one that carries
+  # the page edit, and `handover` squashes the task into one commit: so this step adds a second
+  # one, which moves `verified_commit` to the squashed commit and `verified:` to the day on the
+  # pages the implementer declared still holding and the review audited. The script checks that
+  # the commit changes those frontmatter lines and nothing else before it pushes, and no model is
+  # involved. No `on_fail`, so a failure blocks: a way back to `implement` would run `handover`
+  # again, and `spoolway stack` would squash the pin commit into a commit the pins do not name.
+  - id: pin
+    description: Move the drift pin of the pages this task answered for to the squashed commit, in a commit of its own, and push it.
+    run: scripts/spoolway/pins.sh pin
+    hide: true
+    timeout: 5m
+    on_pass: ci
+
+  # The pull request's CI: without this step nothing after `handover` reads the pull request's
+  # checks, and a task can reach `done` with red CI. The script waits for every check on the head
+  # of the task's pull request, and fails naming each failing or unfinished check and its run URL. Like `pin`, no `on_fail`: a way back to
+  # `implement` would run `handover` again, and `spoolway stack` would squash the pin commit away.
+  # The script gives up on unfinished checks after 35 minutes (CI_WAIT_SECONDS); `timeout` is above it.
+  - id: ci
+    description: Wait for every check on the task's pull request to be green; a red, missing or unfinished check blocks the task.
+    run: scripts/spoolway/ci.sh
+    hide: true
+    timeout: 45m
+    on_pass: dod
+
+  # The ticket's acceptance criteria: one lane
+  # proves what the harness can, asks the person ONCE to accept all of it and once for each other
+  # criterion, in its own pane, then ticks the accepted boxes and posts the evidence in one new
+  # comment. `slot: false`: it waits for a person and must not hold a lane. No `on_fail`, like `pin`
+  # and `ci`: a fail parks on `blocked`, and the unblocker never answers for the person.
+  - id: dod
+    description: Prove the ticket's acceptance criteria, ask the person to accept them, tick the accepted ones and post the evidence; an unmet or rejected criterion blocks the task.
+    agent: claude
+    prompt: developing-dod
+    model: claude-sonnet-5-5
+    effort: medium
+    slot: false
+    on_pass: signals
+
+  # Run reports. The objective signals and their thresholds are these flags and nothing
+  # else: the script refuses to run without every one, and no lane weighs them.
+  #   --blocks 1                the task touched `blocked` at least once
+  #   --implement-arrivals 3    the loop on `implement` was spent: the first pass and both returns
+  #   --environment-failures 1  `checks` failed on an `ENVIRONMENT:` line, not on the code
+  #   --spend-usd 20            the run cost more than 20 USD, from the first run on
+  #   --spend-median-x 2        or more than twice the median of the earlier runs of this pipeline
+  #   --spend-min-runs 5        and `version`, once there are five of them
+  #   --doctor-problems 1       `spoolway doctor` reports a problem (its notes do not count)
+  # One more signal is a lane's judgment and cannot be measured here: an urgent finding that does
+  # not block the task, which `report` files at once, labelled `P1-high`.
+  # Raise `version` when a threshold changes. The step leaves a verdict; `report` files it.
+  - id: signals
+    description: Measure the run against the run-report thresholds and leave the verdict for the report step.
+    run: scripts/spoolway/run-report.sh signals --blocks 1 --implement-arrivals 3 --environment-failures 1 --spend-usd 20 --spend-median-x 2 --spend-min-runs 5 --doctor-problems 1
+    hide: true
+    timeout: 5m
+    on_pass: report
+
+  - id: report
+    description: Write the run's retrospective into the task's handoff, and file the run report the signals step called for.
+    agent: claude
+    prompt: developing-report
+    model: claude-sonnet-5-5
+    effort: medium
+    skills: mattpocock-skills:retro
+    on_pass: extra-cleanup
+
+  # A worktree holding work the remote does not have should be left alone, and the step still pass.
+  - id: extra-cleanup
+    description: Remove the task's worktrees in the extra repositories once their branches are on the remote.
+    run: scripts/spoolway/extra-cleanup.sh
+    hide: true
+    on_pass: collect
+
+  # The last step before `done`, always: at `done` spoolway deletes the
+  # task's scratch space and its command-step logs, so this step copies both to
+  # `.scratch/spoolway/<task>/` in the main checkout first, the folder `spoolway-repair` salvages
+  # to. It runs after `extra-cleanup`, which removes nothing of what is copied here. No `on_fail`: a
+  # copy that fails parks the task on `blocked`, before spoolway's cleanup, and `skip_steps` does
+  # not skip it. `--keep-days` is how long a collected folder nothing changed in is kept; the
+  # step sweeps the older ones itself, since spoolway's retention never reaches the checkout.
+  - id: collect
+    description: Copy the task's scratch space and command-step logs out of spoolway's home before done deletes them.
+    run: scripts/spoolway/collect.sh --keep-days 90
+    hide: true
+    timeout: 10m
+    on_pass: done
+
+  # Who clears a block when nobody is watching: an Opus lane at high effort, stronger than the
+  # Sonnet lane that hit it. It is only started in an
+  # unattended run; attended, a blocked task waits for a person. spoolway allows these five keys
+  # here and no `loop:`, so "one attempt per task, then park" is the prompt's rule.
+  - id: blocked
+    agent: claude
+    prompt: developing-unblock
+    model: claude-opus-5-5
+    effort: high
+    session: true

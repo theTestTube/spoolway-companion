@@ -1,0 +1,25 @@
+Carry a stopped task on, reading off `task.stage()` which kind of stop it is so you don't have to.
+
+A task on `blocked` resumes the step it stopped on. A task on `paused` finished a `gate: true` step and is waiting for you to let it past — this sends it on to wherever the step's `on_pass` points. `--stage` overrides that route by hand, and still works on a paused task: naming a step is you choosing where it goes, gate or no gate.
+
+Usage: spoolway resume [OPTIONS] <TASK>
+
+Arguments:
+  <TASK>
+          Task id to resume
+
+Options:
+  -C, --repo <DIR>
+          Repo to operate on. Defaults to the current directory's project
+
+      --stage <STEP>
+          Step to resume at, overriding the route. On a blocked task this replaces the step it stopped on; on a paused task it reroutes past the gate entirely, to a step of your choosing
+
+      --json
+          Machine-readable output, where the command supports it
+
+  -m, --message <MESSAGE>
+          Note recorded in the task's status log
+
+  -h, --help
+          Print help (see a summary with '-h')
