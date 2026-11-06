@@ -1,0 +1,53 @@
+pipeline `developing`  entry: extra-worktree
+    One ticket becomes one pull request, with the extra repositories' pull requests ahead of it when the task names any: implement it, run the repository's checks, have an Opus review judge the diff, open the pull requests, and write the run's report, filing a run report only when an objective signal crosses its threshold.
+
+  extra-worktree command   waits hide=true timeout=30m
+             Cut the task's extra worktrees on the task's branch name, when the task names extra repositories.
+             run: scripts/spoolway/extra-worktree.sh
+             pass -> implement   fail -> blocked
+
+  implement  agent     agent=claude prompt=developing-implement model=claude-sonnet-5-5 session loop=3 exit=blocked
+             Build the input issue with the user-invoked implement skill, in this task's worktree; passes at once when the task names the other implementer or skips it.
+             pass -> implement-spec   fail -> blocked
+
+  implement-spec agent     agent=claude prompt=developing-implement-spec model=claude-sonnet-5-5 session loop=3 exit=blocked
+             Build a whole spec with the user-invoked implement-spec skill, at most two implementers at once; passes at once when the task names the other implementer or skips it.
+             pass -> checks   fail -> blocked
+
+  checks     command   waits timeout=45m
+             Run the repository's checks in the task's worktree; a failure goes back to implement.
+             run: scripts/spoolway/checks.sh
+             pass -> review   fail -> implement
+
+  review     agent     agent=claude prompt=developing-review model=claude-opus-5-5
+             An Opus review of the diff against the issue and the project's standards; a failing verdict goes back to implement.
+             pass -> extra-handover   fail -> implement
+
+  extra-handover command   waits hide=true timeout=30m
+             Push the task's extra branches and open their pull requests, ahead of this one's.
+             run: scripts/spoolway/extra-handover.sh
+             pass -> handover   fail -> blocked
+
+  handover   command   waits hide=true timeout=30m
+             Squash, push and open the task's pull request, with no AI attribution in its body.
+             run: scripts/spoolway/handover.sh
+             pass -> signals   fail -> blocked
+
+  signals    command   waits hide=true timeout=5m
+             Measure the run against the run-report thresholds and leave the verdict for the report step.
+             run: scripts/spoolway/run-report.sh signals --blocks 1 --implement-arrivals 3 --environment-failures 1 --spend-usd 20 --spend-median-x 2 --spend-min-runs 5 --doctor-problems 1
+             pass -> report   fail -> blocked
+
+  report     agent     agent=claude prompt=developing-report model=claude-sonnet-5-5
+             Write the run's retrospective into the task's handoff, and file the run report the signals step called for.
+             pass -> extra-cleanup   fail -> blocked
+
+  extra-cleanup command   waits hide=true timeout=30m
+             Remove the task's extra worktrees once their branches are on the remote.
+             run: scripts/spoolway/extra-cleanup.sh
+             pass -> done   fail -> blocked
+
+  blocked    agent     overridden in developing.yml   agent=claude prompt=developing-unblock model=claude-opus-5-5 session
+             Staffed only in an unattended run. Reads why the task stopped and either clears it — a pass carries the task on from the step it blocked on — or, only when the thing genuinely cannot be done, pauses it for a person with the same destination waiting. One turn either way: nothing routes back onto `blocked` itself.
+             pass -> past where it blocked   fail/block/pause -> paused (same destination waiting)
+

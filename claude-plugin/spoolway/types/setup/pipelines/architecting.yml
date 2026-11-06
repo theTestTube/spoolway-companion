@@ -1,0 +1,99 @@
+# Architecting: an idea issue
+# becomes a wayfinder map, charted in an interview, with one resolve-mode task document per new
+# frontier ticket waiting in `pending/`. It holds the chart, resolve and spec modes and, in chart
+# and spec modes, the `artifact` step. A task picks its mode with `skip_steps` in its
+# document, and a skipped step passes at once: chart mode skips `resolve` and `spec`, resolve mode
+# skips `chart`, `spec` and `artifact`, spec mode skips `recall`, `chart` and `resolve`. Model and effort are fixed here and versioned: raise `version`
+# when a step's model, effort or loop changes, so `spoolway eval` compares like with like.
+#
+# There is no handover step, so the run opens no pull request. The map is bound to the idea
+# issue without the close-on-merge label (`close_on_merge: false` in the task document), and the
+# worktree is removed at `done`.
+
+version: "1.4"
+
+description: >-
+  The owner queues an Architecting task against an idea issue and charts a wayfinder map for it
+  in an interview, with one draft resolve-mode task per new frontier ticket left in pending and
+  none queued.
+
+steps:
+  # Session history, read-only, through memex. It writes candidates and nothing else.
+  - id: recall
+    description: Search session history for what earlier work says about the idea, as candidates only.
+    agent: claude
+    prompt: architecting-recall
+    model: claude-opus-5-5
+    effort: high
+    skills: memex-search
+    on_pass: chart
+
+  # `wayfinder` is a user-invoked skill, so spoolway types the slash command and nothing else.
+  # The chart is an interview with the owner in the lane's pane. Research tickets fan out
+  # to at most four subagents at once.
+  - id: chart
+    description: Chart a wayfinder map for the idea in an interview, and draft one resolve-mode task per new frontier ticket into pending.
+    agent: claude
+    prompt: architecting-chart
+    model: claude-opus-5-5
+    effort: medium
+    skills: mattpocock-skills:wayfinder
+    session: true
+    on_pass: resolve
+
+  # Resolve mode: `wayfinder` on the one map ticket the task document names, and a draft
+  # resolve-mode task in `pending/` for each new frontier ticket its answer opens, so a map
+  # advances one ticket per run. Chart mode skips this step.
+  - id: resolve
+    description: Resolve the one map ticket the task document names, and draft one resolve-mode task per new frontier ticket into pending.
+    agent: claude
+    prompt: architecting-resolve
+    model: claude-opus-5-5
+    effort: medium
+    skills: mattpocock-skills:wayfinder
+    session: true
+    on_pass: spec
+
+  # Spec mode: `to-spec` on a map whose tickets are closed, synthesized from the map's
+  # "Decisions so far" and each closed ticket's resolution comment, never from a conversation. It
+  # cites each closed ticket it rests on and re-decides none. Chart and resolve modes skip this step.
+  - id: spec
+    description: Publish the spec of a map from its Decisions so far and its closed tickets' resolution comments, citing each ticket.
+    agent: claude
+    prompt: architecting-spec
+    model: claude-opus-5-5
+    effort: medium
+    skills: mattpocock-skills:to-spec
+    on_pass: report
+
+  # The retrospective, and the run's findings as one comment on the weekly digest issue.
+  # No objective run-report thresholds are set for this type yet, so there is no `signals` step:
+  # the only run report this pipeline files is an urgent finding, a lane's judgment, at once.
+  - id: report
+    description: Write the run's retrospective into the handoff, its findings on the weekly digest issue, and a run report only above the threshold.
+    agent: claude
+    prompt: architecting-report
+    model: claude-opus-5-5
+    effort: high
+    skills: mattpocock-skills:retro
+    on_pass: artifact
+
+  # The map's overview page: one private claude.ai page, created once and updated in place at the
+  # URL the map's Notes name. It follows the tickets and decides nothing, so Sonnet at high effort
+  # is enough, the one step here not on Opus. Resolve mode skips it.
+  - id: artifact
+    description: Publish the map's private overview page with the Artifact tool, updating the page its Notes name or creating one and writing its link into the Notes.
+    agent: claude
+    prompt: architecting-artifact
+    model: claude-sonnet-5-5
+    effort: high
+    on_pass: collect
+
+  # The last step before `done`, always : at `done` spoolway deletes the
+  # task's scratch space and its command-step logs, so this step copies both out first.
+  - id: collect
+    description: Copy the task's scratch space and command-step logs out of spoolway's home before done deletes them.
+    run: scripts/spoolway/collect.sh --keep-days 90
+    hide: true
+    timeout: 10m
+    on_pass: done
