@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: Gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The gates below run `spoolway pipeline check`. The bare executable is the only artefact
+      # of the version the tracked .spoolway/ is written for; move this pin with a spoolway
+      # update, together with .spoolway/config.toml.
+      - name: Install spoolway 0.17.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.17.0 --repo marvingygas/spoolway \
+            --pattern 'spoolway-linux-x64' --pattern 'SHA256SUMS'
+          sha256sum -c --ignore-missing SHA256SUMS
+          install -D spoolway-linux-x64 "$HOME/.local/bin/spoolway"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          spoolway --version
+
+      # The same lines, in the same order, as the `gates` block of scripts/spoolway/checks.sh, the
+      # Developing pipeline's `checks` step: tests/spoolway-developing.test.sh fails when they
+      # differ, so a command added here goes into checks.sh too, and the reverse.
+      - name: Gates
+        run: |
+          scripts/gates/run.sh machine-keys
+          for t in tests/*.test.sh; do bash "$t"; done
+          timeout 120 spoolway pipeline check < /dev/null

@@ -1,0 +1,31 @@
+# The spoolway types this repository runs, one consumer path per line.
+#
+# The plugin ships five pipelines; this repository dispatches three: developing,
+# developing-sonnet-review and materializing. Architecting and feeding-back run in the repositories
+# that consume it, so their pipelines, prompts and task templates are not taken here. `types.sh
+# write` writes, locks and deletes only the paths below, and refuses a path the shipped
+# types.manifest does not list. Remove this file to take every type again.
+.spoolway/pipelines/developing-sonnet-review.yml
+.spoolway/pipelines/developing.yml
+.spoolway/pipelines/materializing.yml
+.spoolway/prompts/developing-implement-spec
+.spoolway/prompts/developing-dod/PROMPT.md
+.spoolway/prompts/developing-implement/PROMPT.md
+.spoolway/prompts/developing-report/PROMPT.md
+.spoolway/prompts/developing-review/PROMPT.md
+.spoolway/prompts/developing-unblock/PROMPT.md
+.spoolway/prompts/materializing-document/PROMPT.md
+.spoolway/prompts/materializing-grill/PROMPT.md
+.spoolway/prompts/materializing-recall/PROMPT.md
+.spoolway/prompts/materializing-report/PROMPT.md
+.spoolway/prompts/materializing-tickets/PROMPT.md
+.spoolway/prompts/materializing-triage/PROMPT.md
+.spoolway/prompts/unblocker/PROMPT.md
+.spoolway/templates/tasks/developing.md
+.spoolway/templates/tasks/materializing.md
+scripts/spoolway/ci.sh
+scripts/spoolway/collect.sh
+scripts/spoolway/dod.sh
+scripts/spoolway/lib.sh
+scripts/spoolway/pins.sh
+scripts/spoolway/run-report.sh

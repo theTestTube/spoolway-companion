@@ -1,0 +1,170 @@
+# Materializing: one spec becomes triaged tickets, one draft Developing task per ticket, and one
+# pull request with what the interview decided, as documentation that already passed the
+# repository's gates. Model and effort are fixed here and versioned: raise `version` when a step's
+# model, effort or loop changes, so `spoolway eval` compares like with like. Run parameters live
+# in the task document, never here. The `materializing-*` scripts are the consumer's own.
+
+version: "1.3"
+
+description: >-
+  The owner queues a Materializing task against a spec and gets it grilled, triaged and cut into
+  tickets, with a draft Developing task per ticket ready to queue and one gated pull request
+  holding the documentation the interview decided.
+
+steps:
+  # A spec outlives its task. Nothing validates a passthrough key at queue time, so a task
+  # without `ticket:` and `close_on_merge: false` stops here, before a lane spends anything.
+  - id: bind
+    description: Refuse a task that is not bound to an open spec with close_on_merge false.
+    run: scripts/spoolway/materializing-bind.sh
+    hide: true
+    timeout: 5m
+    on_pass: recall
+
+  # Session history, read-only, through memex. It writes candidates and nothing else.
+  - id: recall
+    description: Search session history for what earlier work says about the spec, as candidates only.
+    agent: claude
+    prompt: materializing-recall
+    model: claude-opus-5-5
+    effort: high
+    skills: memex-search
+    on_pass: backing
+
+  # The backing gate: a candidate reaches the grill only when the consumer's script finds it backed
+  # by the repository, for instance a page and an issue or code it cites. A hit that is not is
+  # dropped. No lane weighs it.
+  - id: backing
+    description: Admit a recalled candidate only when the repository backs it; drop the rest.
+    run: scripts/spoolway/materializing-backing.sh
+    hide: true
+    timeout: 10m
+    on_pass: grill
+
+  # `grill-with-docs`, `triage` and `to-tickets` are user-invoked skills, so spoolway types each
+  # slash command and nothing else: one slash command per opening message, one step per skill.
+  # The grill is an interview with the owner in the lane's pane, and it is the gate: its pass
+  # parks the task on `paused` until the owner resumes it. The breakdown into tickets is agreed
+  # here, so the two steps after it ask nothing.
+  - id: grill
+    description: Interview the owner about the spec in the lane's pane and agree the breakdown into tickets.
+    agent: claude
+    prompt: materializing-grill
+    model: claude-opus-5-5
+    effort: medium
+    skills: mattpocock-skills:grill-with-docs
+    gate: on_pass
+    on_pass: triage
+    # A fail here is the owner deciding the spec is not to be cut: the run ends, with nothing
+    # opened and the spec left open. Without it the fail would park on `blocked`, which an
+    # unattended run staffs with a lane that could carry the task on into `triage`. It ends
+    # through `collect` like every other run: the recall and the grill have written by then.
+    on_fail: collect
+
+  - id: triage
+    description: Triage the spec itself, category and state, before any ticket is cut.
+    agent: claude
+    prompt: materializing-triage
+    model: claude-opus-5-5
+    effort: medium
+    skills: mattpocock-skills:triage
+    on_pass: tickets
+
+  # Opens the tickets, each in the repository of the project that will dispatch it, and leaves
+  # the draft Developing tasks in its scratch space. `drafts` fails back here once: arrivals count
+  # the first, so 2 is the first pass and one return to correct the drafts, never to open issues.
+  - id: tickets
+    description: Open the agreed tickets as sub-issues of the spec, each in its project's repository, and draft one Developing task per ticket.
+    agent: claude
+    prompt: materializing-tickets
+    model: claude-opus-5-5
+    effort: medium
+    skills: mattpocock-skills:to-tickets
+    session: true
+    loop: 2
+    on_pass: drafts
+
+  # Checks the drafts against the tickets and spoolway's own task contract, then copies them into
+  # `pending/`, all or nothing. It queues nothing: a person sends them from the queue screen.
+  - id: drafts
+    description: Check one draft Developing task per ticket and write the set into pending, queueing nothing.
+    run: scripts/spoolway/materializing-drafts.sh
+    hide: true
+    timeout: 10m
+    on_pass: document
+    on_fail: tickets
+
+  # The documentation steps. `document` writes what the grill decided, and nothing else, where the
+  # repository's own instructions say decisions and terms are recorded. Sonnet at medium effort:
+  # documentation runs on the cheaper model. No `skills:` here: spoolway types a slash command
+  # with the rest of the opening message as its argument, so the prompt has the lane run whatever
+  # commands it needs with their own arguments. It never reads session history: `memex-search` is
+  # not among its skills and the prompt forbids the candidates `recall` left. `gates` fails back
+  # here. Arrivals count the first, so 3 is the first pass and two returns; the next arrival blocks.
+  - id: document
+    description: Record what the interview decided where the repository records decisions and terms; passes at once when it decided nothing.
+    agent: claude
+    prompt: materializing-document
+    model: claude-sonnet-5-5
+    effort: medium
+    session: true
+    loop: 3
+    on_pass: gates
+
+  # The repository's own gates, in the consumer's script, and the guards no gate can make from
+  # the tree alone, such as nothing changed outside the documentation and no lane moved a drift
+  # pin. What it refused is left in the scratch space for `document`.
+  - id: gates
+    description: Run the repository's gates on what the document step wrote; a failure goes back to document.
+    run: scripts/spoolway/materializing-gates.sh
+    hide: true
+    timeout: 15m
+    on_pass: handover
+    on_fail: document
+
+  # `spoolway stack`, through the script Developing uses: one pull request, the owner's only
+  # checkpoint, with no closing keyword and no AI attribution in its body. The spec is bound with
+  # `close_on_merge: false`, so merging it closes nothing. A run that documented nothing opens
+  # none, and this step and the next pass at once.
+  - id: handover
+    description: Squash, push and open the pull request holding the documentation changes.
+    run: scripts/spoolway/materializing-handover.sh handover
+    hide: true
+    on_pass: pin
+
+  # Page pins, as in Developing: `handover` squashes the task into one commit, and a pin
+  # goes on a commit already on the branch, so this step adds the second one. Here it runs the
+  # full gate and fails unless it ends GREEN. No `on_fail`, so a failure blocks: a way back to
+  # `document` would run `handover` again and squash the pin commit away.
+  - id: pin
+    description: Move the drift pin of the pages the document step answered for to the squashed commit, in a commit of its own, and push it.
+    run: scripts/spoolway/materializing-handover.sh pin
+    hide: true
+    timeout: 5m
+    on_pass: report
+
+  # The retrospective, and the run's findings as one comment on the weekly digest issue.
+  # No objective run-report thresholds are set for this type yet, so there is no `signals` step:
+  # the only run report this pipeline files is an urgent finding, a lane's judgment, at once.
+  - id: report
+    description: Write the run's retrospective into the handoff and its findings on the weekly digest issue.
+    agent: claude
+    prompt: materializing-report
+    model: claude-opus-5-5
+    effort: high
+    skills: mattpocock-skills:retro
+    on_pass: collect
+
+  # The last step before `done`, always: at `done` spoolway deletes the
+  # task's scratch space and its command-step logs, so this step copies both to
+  # `.scratch/spoolway/<task>/` in the main checkout first, the folder `spoolway-repair` salvages
+  # to. Both roads to `done` pass here: the report's pass and the grill's fail. No `on_fail`: a
+  # copy that fails parks the task on `blocked`, before spoolway's cleanup, and `skip_steps` does
+  # not skip it. `--keep-days` is how long a collected folder nothing changed in is kept; the
+  # step sweeps the older ones itself, since spoolway's retention never reaches the checkout.
+  - id: collect
+    description: Copy the task's scratch space and command-step logs out of spoolway's home before done deletes them.
+    run: scripts/spoolway/collect.sh --keep-days 90
+    hide: true
+    timeout: 10m
+    on_pass: done

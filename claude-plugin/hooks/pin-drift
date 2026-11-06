@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# Pin-drift hook.
+#
+# Compares every plugin that the project's inline marketplaces pin by `sha`
+# (`$CLAUDE_PROJECT_DIR/.claude/settings.json`) with the commit actually installed.
+# Editing a `sha` does not move the installed copy; only
+# `claude plugin update <id> --scope project` plus a restart does.
+#
+#   pin-drift session-start   warn the user, and tell the agent to keep out of the protected path
+#   pin-drift pre-tool-use    deny Write/Edit under the protected path while drift persists
+#
+# The protected path is the project's PIN_DRIFT_PROTECTED: an environment variable of that
+# name, else the `PIN_DRIFT_PROTECTED=<dir>` line of `.spoolway/companion.env` (read with grep,
+# never sourced). Typically the directory a pinned plugin writes into, so nothing is written
+# there by a copy older or newer than the pin. Without it the hook only warns.
+#
+# Drift is recomputed on every call, so the gate lifts as soon as the install matches.
+# The hook never blocks the session: every path exits 0.
+
+set -u
+
+mode="${1:-}"
+input="$(cat 2>/dev/null || true)"
+
+if ! command -v jq >/dev/null 2>&1; then
+  if [ "$mode" = session-start ]; then
+    printf '%s\n' '{"systemMessage":"spoolway-companion pin-drift: jq is not installed, so plugin pins cannot be checked."}'
+  fi
+  exit 0
+fi
+
+field() { jq -r "$1 // empty" <<<"$input" 2>/dev/null; }
+
+project_dir="${CLAUDE_PROJECT_DIR:-$(field .cwd)}"
+config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+settings="$project_dir/.claude/settings.json"
+local_settings="$project_dir/.claude/settings.local.json"
+installed_file="$config_dir/plugins/installed_plugins.json"
+
+# protected_dir: PIN_DRIFT_PROTECTED from the environment, else from .spoolway/companion.env,
+# without a leading ./ or a trailing slash. Empty when neither names one.
+protected_dir() {
+  local value="${PIN_DRIFT_PROTECTED:-}" env_file="$project_dir/.spoolway/companion.env"
+  if [ -z "$value" ] && [ -f "$env_file" ]; then
+    value="$(grep -E '^PIN_DRIFT_PROTECTED=' "$env_file" 2>/dev/null | tail -n 1 | cut -d= -f2-)"
+  fi
+  value="${value%"${value##*[![:space:]]}"}"
+  value="${value#./}"
+  printf '%s' "${value%/}"
+}
+protected="$(protected_dir)"
+
+# The record that applies to this project: its own local, then project, record;
+# otherwise the most recently updated one (a worktree without its own install
+# loads the shared cached copy).
+PICK='def pick($dir):
+  (map(select(.projectPath == $dir)) | sort_by(if .scope == "local" then 0 else 1 end) | first)
+  // (sort_by(.lastUpdated // "") | last);'
+
+# TSV of enabled, sha-pinned entries: id, sha, ref.
+# settings.local.json overrides enablement, so a deliberately disabled entry is skipped.
+pinned_entries() {
+  [ -f "$settings" ] || return 0
+  local overlay='{}'
+  if [ -f "$local_settings" ]; then
+    overlay="$(jq -c '.enabledPlugins // {}' "$local_settings" 2>/dev/null)" || overlay='{}'
+  fi
+  jq -r --argjson local "$overlay" '
+    (.enabledPlugins // {}) as $enabled
+    | (.extraKnownMarketplaces // {}) | to_entries[]
+    | .key as $marketplace
+    | (.value.source.plugins // [])[]
+    | select((.source | type) == "object" and (.source.sha // "") != "")
+    | "\(.name)@\($marketplace)" as $id
+    | select((if $local | has($id) then $local[$id] else $enabled[$id] end) == true)
+    | [$id, .source.sha, (.source.ref // "")] | @tsv
+  ' "$settings" 2>/dev/null
+}
+
+plugin_list=""
+plugin_list_state=""  # "", ok, failed
+load_plugin_list() {
+  [ -n "$plugin_list_state" ] && return
+  plugin_list_state=failed
+  command -v claude >/dev/null 2>&1 || return
+  local runner=()
+  command -v timeout >/dev/null 2>&1 && runner=(timeout 30)
+  if plugin_list="$("${runner[@]}" claude plugin list --json 2>/dev/null)" \
+    && jq -e 'type == "array"' <<<"$plugin_list" >/dev/null 2>&1; then
+    plugin_list_state=ok
+  fi
+}
+
+# Prints: status US installed US method-or-reason (US = \x1f: unlike a tab,
+# read never collapses it, so an empty field survives)
+#   status: match | drift | foreign | missing | undecided
+#   foreign: drift, but the picked record belongs to another path, so `update`
+#   would move that record; this worktree needs its own `install`.
+check_entry() {
+  local id="$1" sha="$2" ref="$3" installed_sha="" has_record="" version drift=drift
+
+  if [ -f "$installed_file" ]; then
+    has_record="$(jq -r --arg id "$id" '(.plugins[$id] // []) | length > 0' "$installed_file" 2>/dev/null)"
+    installed_sha="$(jq -r --arg id "$id" --arg dir "$project_dir" \
+      "$PICK (.plugins[\$id] // []) | pick(\$dir) | .gitCommitSha // empty" \
+      "$installed_file" 2>/dev/null)"
+    if [ "$(jq -r --arg id "$id" --arg dir "$project_dir" \
+      '(.plugins[$id] // []) | any(.projectPath == $dir)' "$installed_file" 2>/dev/null)" != true ]; then
+      drift=foreign
+    fi
+  fi
+  if [ -n "$installed_sha" ]; then
+    if [ "$installed_sha" = "$sha" ]; then
+      printf 'match\x1f%s\x1fgitCommitSha\n' "$installed_sha"
+    else
+      printf '%s\x1f%s\x1fgitCommitSha\n' "$drift" "$installed_sha"
+    fi
+    return
+  fi
+
+  # Fallback: installed_plugins.json is absent or its record carries no gitCommitSha.
+  load_plugin_list
+  if [ "$plugin_list_state" != ok ]; then
+    printf 'undecided\x1f\x1fno gitCommitSha in %s, and `claude plugin list --json` did not answer\n' "$installed_file"
+    return
+  fi
+  drift=drift
+  jq -e --arg id "$id" --arg dir "$project_dir" 'any(.[]; .id == $id and .projectPath == $dir)' \
+    <<<"$plugin_list" >/dev/null || drift=foreign
+  version="$(jq -r --arg id "$id" --arg dir "$project_dir" \
+    "$PICK map(select(.id == \$id)) | pick(\$dir) | .version // empty" <<<"$plugin_list")"
+  if ! jq -e --arg id "$id" 'any(.[]; .id == $id)' <<<"$plugin_list" >/dev/null; then
+    if [ "$has_record" = true ]; then
+      printf 'undecided\x1f\x1finstalled_plugins.json has a record without gitCommitSha, and `claude plugin list --json` does not list it\n'
+    else
+      printf 'missing\x1f\x1fnot installed\n'
+    fi
+  elif [[ "$version" =~ ^([0-9a-f]{12})(-|$) ]]; then
+    # A plugin without a version is cached under its commit: <sha12>[-<suffix>].
+    if [ "${BASH_REMATCH[1]}" = "${sha:0:12}" ]; then
+      printf 'match\x1f%s\x1fversion\n' "$version"
+    else
+      printf '%s\x1f%s\x1fversion\n' "$drift" "$version"
+    fi
+  elif [ -n "$ref" ] && [ -n "$version" ]; then
+    if [ "${ref#v}" = "${version#v}" ]; then
+      printf 'match\x1f%s\x1fversion vs ref\n' "$version"
+    else
+      printf '%s\x1f%s\x1fversion vs ref\n' "$drift" "$version"
+    fi
+  else
+    printf 'undecided\x1f%s\x1fno gitCommitSha, and version "%s" cannot be compared with ref "%s"\n' "$version" "$version" "$ref"
+  fi
+}
+
+# Fills: drift_lines, commands, undecided_lines.
+evaluate() {
+  drift_lines="" commands="" undecided_lines=""
+  local id sha ref status installed how
+  while IFS=$'\t' read -r id sha ref; do
+    [ -n "$id" ] || continue
+    IFS=$'\x1f' read -r status installed how < <(check_entry "$id" "$sha" "$ref")
+    case "$status" in
+      drift|foreign)
+        drift_lines+="- ${id}: installed ${installed:0:12} (by ${how}), pinned ${sha:0:12}."$'\n'
+        if [ "$status" = foreign ]; then
+          commands+="claude plugin install ${id} --scope project"$'\n'
+        else
+          commands+="claude plugin update ${id} --scope project"$'\n'
+        fi ;;
+      missing)
+        drift_lines+="- ${id}: not installed, pinned ${sha:0:12}."$'\n'
+        commands+="claude plugin install ${id} --scope project"$'\n' ;;
+      undecided)
+        undecided_lines+="- ${id}: cannot decide whether the install matches pin ${sha:0:12}: ${how}."$'\n' ;;
+    esac
+  done < <(pinned_entries)
+}
+
+session_start() {
+  evaluate
+  [ -z "$drift_lines$undecided_lines" ] && return
+
+  local message="spoolway-companion pin-drift" context=""
+  if [ -n "$drift_lines" ]; then
+    message+=$'\nInstalled plugins do not match the commits pinned in .claude/settings.json:\n'"$drift_lines"
+    message+=$'Run, then restart Claude Code:\n'"$commands"
+    context="Plugin pin drift: the installed plugins do not match the commits pinned in .claude/settings.json."$'\n'"$drift_lines"
+    if [ -n "$protected" ]; then
+      context+="Do not write into $protected/ until they match. Write and Edit under $protected/ are denied; do not use Bash or any other tool to write there either. "
+    fi
+    context+="Ask the user to run the following, then restart Claude Code:"$'\n'"$commands"
+  fi
+  [ -n "$undecided_lines" ] && message+=$'\n'"$undecided_lines"
+
+  jq -n --arg message "${message%$'\n'}" --arg context "${context%$'\n'}" '
+    {systemMessage: $message}
+    + (if $context == "" then {} else
+        {hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $context}}
+      end)'
+}
+
+pre_tool_use() {
+  local path cwd
+  [ -n "$protected" ] || return
+  path="$(field .tool_input.file_path)"
+  [ -n "$path" ] || return
+  cwd="$(field .cwd)"
+  case "$path" in /*) ;; *) path="${cwd:-$project_dir}/$path" ;; esac
+  case "$path/" in */"$protected"/*) ;; *) return ;; esac
+
+  evaluate
+  [ -n "$drift_lines" ] || return
+
+  jq -n --arg reason "Writes under $protected/ are blocked until the installed plugins match their pins."$'\n'"${drift_lines}Ask the user to run, then restart Claude Code:"$'\n'"${commands%$'\n'}" '
+    {hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}'
+}
+
+case "$mode" in
+  session-start) session_start ;;
+  pre-tool-use) pre_tool_use ;;
+esac
+exit 0

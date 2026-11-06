@@ -1,0 +1,7 @@
+{
+  "name": "spoolway-companion",
+  "description": "Pipeline types, hooks and skills for running coding agents through spoolway.",
+  "author": {
+    "name": "theTestTube"
+  }
+}

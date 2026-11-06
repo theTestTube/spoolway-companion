@@ -1,0 +1,93 @@
+name: close merged spoolway issues
+
+# Spoolway's `done` event means the task reached its pull request. The hook
+# leaves a trusted marker in a PR comment; delivery completes here, only after
+# GitHub says that pull request actually merged.
+#
+# A task is bound to the issue it was queued, and only an issue
+# the hook labelled `spoolway:task` is closed: a spec, a map or a human-owned
+# issue is bound without it and stays open. A closure made with the Actions
+# token starts no other workflow, so the queue-state labels are stripped
+# here too: keep this list equal to any other workflow that strips them.
+#
+# A template: the companion never updates your copy. Kept deliberately:
+# the shipped 0.12.0 hook no longer posts this marker, so this workflow only
+# works beside the project-owned `.spoolway/hooks/github.sh`. A later
+# `spoolway sync --replace` of that hook would silently stop closing issues.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  close-issue:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: close the bound issue
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const pull = context.payload.pull_request;
+            const trusted = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+            const marker = /<!--\s*spoolway-issue:\s*https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/issues\/(\d+)\s*-->/i;
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {owner, repo, issue_number: pull.number, per_page: 100}
+            );
+            let issueNumber;
+            for (const comment of comments.reverse()) {
+              if (!trusted.has(comment.author_association)) continue;
+              const match = comment.body?.match(marker);
+              if (!match) continue;
+              if (match[1].toLowerCase() !== owner.toLowerCase() ||
+                  match[2].toLowerCase() !== repo.toLowerCase()) continue;
+              issueNumber = Number(match[3]);
+              break;
+            }
+            if (!issueNumber) {
+              core.notice(`PR #${pull.number} has no trusted spoolway issue marker`);
+              return;
+            }
+
+            const task = await github.rest.issues.get({owner, repo, issue_number: issueNumber});
+            const taskLabels = task.data.labels.map(label =>
+              typeof label === 'string' ? label : label.name
+            );
+            if (!taskLabels.includes('spoolway:task')) {
+              core.notice(`#${issueNumber} is not labelled spoolway:task; leaving it open`);
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issueNumber,
+              body: `**spoolway:** merged in #${pull.number}.`
+            });
+            await github.rest.issues.update({
+              owner,
+              repo,
+              issue_number: issueNumber,
+              state: 'closed',
+              state_reason: 'completed'
+            });
+            for (const label of ['spoolway:in-progress', 'spoolway:review',
+                'needs-triage', 'needs-info', 'ready-for-agent', 'ready-for-human']) {
+              if (!taskLabels.includes(label)) continue;
+              try {
+                await github.rest.issues.removeLabel({
+                  owner, repo, issue_number: issueNumber, name: label
+                });
+                core.info(`#${issueNumber}: removed ${label}`);
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
