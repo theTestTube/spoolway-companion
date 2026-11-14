@@ -9,12 +9,16 @@
 #                                        body, when at least one signal crossed; nothing otherwise.
 #   run-report.sh file [--urgent <line>] run by the `report` lane. Opens the issue the verdict
 #                                        calls for, once per run, and prints its URL.
+#   run-report.sh repo                   prints the report repository, `[HOST/]OWNER/REPO`, for the
+#                                        Feeding-back intake. Needs no task: an intake lane is bound
+#                                        to none.
 #
 # The thresholds live in the pipeline file and nowhere else: `signals` refuses to run without
 # every one of them, and `file` decides nothing: it opens what `signals` left, or an urgent
 # finding the lane names, the one signal that is a lane's judgment.
 #
 # Exit codes of `file`: 0 filed, already filed, or nothing to file; 2 the tracker refused.
+# Exit codes of `repo`: 0 printed; 2 the report repository cannot be told (nothing on stdout).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -24,6 +28,12 @@ here=$(cd "$(dirname "$0")" && pwd)
 REPORT_REPO=
 REPORT_LABEL=run-report
 URGENT_LABEL=P1-high
+
+# `repo` reads no task, so it answers before the task file is required.
+if [ "${1:-}" = repo ]; then
+  run_report_repo || exit 2
+  exit 0
+fi
 
 task_file=${SPOOLWAY_TASK_FILE:-}
 if [ -z "$task_file" ] || [ ! -f "$task_file" ]; then
@@ -288,5 +298,5 @@ file_report() {
 case "${1:-}" in
   signals) shift; signals "$@" ;;
   file) shift; file_report "$@" ;;
-  *) echo "usage: run-report.sh signals <thresholds> | file [--urgent <line>]" >&2; exit 64 ;;
+  *) echo "usage: run-report.sh signals <thresholds> | file [--urgent <line>] | repo" >&2; exit 64 ;;
 esac

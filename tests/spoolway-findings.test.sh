@@ -39,7 +39,7 @@ cat > "$work/bin/gh" <<'FAKE'
 #!/bin/sh
 echo "gh $*" >> "$CALLS"
 case "$1 $2" in
-  "repo view") echo example/project ;;
+  "repo view") [ -n "${GH_FAIL:-}" ] && exit 1; echo example/project ;;
   "issue list") case "$*" in *weekly*) [ -n "$DIGEST_URL" ] && echo "$DIGEST_URL" ;; esac ;;
   "issue create"|"issue comment")
     while [ $# -gt 0 ]; do [ "$1" = --body-file ] && cp "$2" "$BODY_OUT"; shift; done
@@ -125,7 +125,32 @@ check "file: RUN_REPORT_REPO in companion.env names the report's repository" 'gr
 make_task report
 RUN_REPORT_REPO=example/env run run-report.sh file --urgent "the environment wins"
 check "file: the environment variable wins over companion.env" 'grep "issue create" "$CALLS" | grep -q -- "--repo example/env"' "$(cat "$CALLS")"
+
+# --- run-report.sh repo: the Feeding-back intake asks it, bound to no task --------------------
+# run_bare runs a script the way an intake lane does: no SPOOLWAY_TASK_FILE, no SPOOLWAY_TASK.
+run_bare() {
+  local script=$1; shift
+  : > "$CALLS"
+  (cd "$work/app" && PATH="$work/bin:$PATH" bash "scripts/spoolway/$script" "$@") > "$work/out" 2> "$work/err"
+  rc=$?
+}
+RUN_REPORT_REPO=example/env run_bare run-report.sh repo
+check "repo: prints RUN_REPORT_REPO from the environment with no task file, asking gh nothing" \
+  '[ $rc -eq 0 ] && [ "$(cat "$work/out")" = example/env ] && ! grep -q "^gh " "$CALLS"' "rc=$rc out=$(cat "$work/out") err=$(cat "$work/err")"
+run_bare run-report.sh repo
+check "repo: prints RUN_REPORT_REPO from companion.env with no task file, asking gh nothing" \
+  '[ $rc -eq 0 ] && [ "$(cat "$work/out")" = example/reports ] && ! grep -q "^gh " "$CALLS"' "rc=$rc out=$(cat "$work/out") err=$(cat "$work/err")"
 rm -f "$work/app/.spoolway/companion.env"
+run_bare run-report.sh repo
+check "repo: with neither set, prints the run repository gh reads from the checkout" \
+  '[ $rc -eq 0 ] && [ "$(cat "$work/out")" = example/project ] && grep -q "^gh repo view" "$CALLS"' "rc=$rc out=$(cat "$work/out") err=$(cat "$work/err")"
+GH_FAIL=1 run_bare run-report.sh repo
+check "repo: exits 2 and prints nothing on stdout when gh cannot tell the repository" \
+  '[ $rc -eq 2 ] && [ ! -s "$work/out" ] && grep -qF "cannot tell which repository" "$work/err"' "rc=$rc out=$(cat "$work/out") err=$(cat "$work/err")"
+run_bare run-report.sh signals "${thresholds[@]}"
+check "signals still refuses to run with no task file" '[ $rc -eq 64 ] && grep -qF "names no task file" "$work/err"' "rc=$rc"
+run_bare run-report.sh file
+check "file still refuses to run with no task file" '[ $rc -eq 64 ] && grep -qF "names no task file" "$work/err"' "rc=$rc"
 
 make_task report
 mkdir -p "$scratch"
