@@ -20,7 +20,11 @@ scripts behind the steps ([extension-points.md](extension-points.md)).
   repository's branch and opens its pull request, then waits for whatever must be green before the
   task's own pull request opens. It runs first because a consumer's CI often resolves the sibling
   repositories by the branch name: the extra branches have to exist on the remote before the main
-  pull request's CI starts.
+  pull request's CI starts. The step's `timeout` is the `ci` step's, 45 minutes, sized for one
+  wait of `CI_WAIT_SECONDS`; a script that waits on several extra repositories one after another
+  raises it on its own machine with
+  `spoolway pipeline override developing --set extra-handover.timeout=<n>m` (spoolway 0.17.0 or
+  later), and the same for every other Developing pipeline it runs.
 - **`extra-cleanup`** (after `report`, before `collect`): the consumer's script removes the extra
   worktrees. It leaves alone a worktree holding work the remote does not have, says so, and still
   passes, so nothing unpushed is lost and the task still finishes.

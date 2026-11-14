@@ -47,12 +47,27 @@ closing_keywords() {
     "$1/claude-plugin/spoolway/types" "$1/tests" 2> /dev/null
 }
 
+# handover_timeout <root>: in a pipeline with both steps, `extra-handover` may wait on the extra
+# pull requests' CI as long as `ci` waits on the task's, so its `timeout` is at least `ci`'s.
+minutes() { case "$1" in *h) echo $((${1%h} * 60)) ;; *m) echo "${1%m}" ;; *s) echo $((${1%s} / 60)) ;; *) echo 30 ;; esac; }
+handover_timeout() {
+  local f ci eh
+  for f in "$1"/claude-plugin/spoolway/types/setup/pipelines/*.yml; do
+    grep -q '^  - id: extra-handover$' "$f" || continue
+    ci=$(awk '/^  - id: / { cur = $3 } cur == "ci" && $1 == "timeout:" { print $2 }' "$f")
+    eh=$(awk '/^  - id: / { cur = $3 } cur == "extra-handover" && $1 == "timeout:" { print $2 }' "$f")
+    [ "$(minutes "${eh:-30m}")" -ge "$(minutes "${ci:-30m}")" ] \
+      || echo "$f: extra-handover's timeout ${eh:-30m (default)} is below ci's ${ci:-30m (default)}"
+  done
+}
+
 # --- The real tree ---------------------------------------------------------------------------
 
 check "every pipeline ends with collect" '[ -z "$(collect_last "$repo")" ]' "$(collect_last "$repo")"
 check "no shared prompt or template names a base branch" '[ -z "$(base_literals "$repo")" ]' "$(base_literals "$repo")"
 check "no Architecting or Feeding-back prompt carries app-only words" '[ -z "$(app_words "$repo")" ]' "$(app_words "$repo")"
 check "no file writes a closing keyword before an issue" '[ -z "$(closing_keywords "$repo")" ]' "$(closing_keywords "$repo")"
+check "extra-handover's timeout is at least ci's" '[ -z "$(handover_timeout "$repo")" ]' "$(handover_timeout "$repo")"
 
 # --- Mutations: a copy of the types and the tests, one rule broken at a time -------------------
 
@@ -71,6 +86,15 @@ check "mutation: a pipeline without collect fails" '[ -n "$(collect_last "$m")" 
 m=$(mutant collect-not-last)
 sed -i '0,/on_pass: collect/s//on_pass: done/' "$(types_of "$m")/pipelines/architecting.yml"
 check "mutation: a step other than collect going to done fails" '[ -n "$(collect_last "$m")" ]'
+
+for p in developing developing-sonnet-review; do
+  m=$(mutant "no-handover-timeout-$p")
+  sed -i '/^  - id: extra-handover$/,/^  - id: handover$/{/^    timeout:/d}' "$(types_of "$m")/pipelines/$p.yml"
+  check "mutation: extra-handover with no timeout in $p fails" '[ -n "$(handover_timeout "$m")" ]'
+  m=$(mutant "short-handover-timeout-$p")
+  sed -i '/^  - id: extra-handover$/,/^  - id: handover$/s/^    timeout: .*/    timeout: 40m/' "$(types_of "$m")/pipelines/$p.yml"
+  check "mutation: extra-handover below ci in $p fails" '[ -n "$(handover_timeout "$m")" ]'
+done
 
 m=$(mutant base-main)
 printf '  base: main\n' >> "$(types_of "$m")/templates/tasks/developing.md"

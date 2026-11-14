@@ -81,10 +81,15 @@ steps:
 
   # Before `handover`, always: a consumer whose CI resolves an extra repository by the pull
   # request's branch name needs that branch on the remote before its own pull request exists.
+  # The consumer's script may wait for the extra pull requests' checks: it gets the `ci` step's
+  # budget, CI_WAIT_SECONDS (35 minutes) plus the push and the opening, so keep this `timeout` at
+  # least the `ci` step's. A script that waits on several extra repositories one after another
+  # raises it with `spoolway pipeline override`.
   - id: extra-handover
     description: Push the task's branch in each extra repository and open its pull request, ahead of the task's own.
     run: scripts/spoolway/extra-handover.sh
     hide: true
+    timeout: 45m
     on_pass: handover
 
   # Opens the pull request, the person's checkpoint, takes spoolway's attribution trailer off
