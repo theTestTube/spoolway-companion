@@ -1,0 +1,543 @@
+#!/usr/bin/env bash
+# The deterministic half of /spoolway-companion:setup: what the interview's answers turn into on
+# disk. The skill asks, this script finds and writes.
+#
+#   setup.sh detect [<consumer>]             what the consumer already has, one fact per line
+#   setup.sh plan <answers> [<consumer>]     what apply would do; writes nothing
+#   setup.sh apply <answers> [<consumer>]    add what is missing, on a branch, uncommitted
+#   setup.sh labels <owner/repo> [--create]  the spoolway:* labels the repository lacks
+#   setup.sh bump <sha> [<consumer>]         move the companion's pin and retake what it ships
+#
+# <consumer> defaults to the current git checkout. <answers> is a file of `key=value` lines read
+# with grep, never sourced (see SKILL.md for the keys). A line whose key is upper case is a
+# .spoolway/companion.env key.
+#
+# What it never does: overwrite a file the consumer has, change an existing value in
+# .claude/settings.json, .spoolway/config.toml or .spoolway/companion.env (a differing value is
+# reported and kept), write a path .spoolway/plugin.lock lists but through types.sh write, touch
+# another plugin's entry or lock, commit, push or edit a label. The one value it changes is the
+# `sha` of the companion's own entry, in `bump`.
+
+set -euo pipefail
+
+PLUGIN=spoolway-companion
+MARKETPLACE=spoolway-companion
+COMPANION_URL=https://github.com/theTestTube/spoolway-companion.git
+LOCK=.spoolway/plugin.lock
+SUBSET=.spoolway/types.subset
+ENV_FILE=.spoolway/companion.env
+CONFIG=.spoolway/config.toml
+SETTINGS=.claude/settings.json
+PROJECTS=docs/agents/projects.md
+LABELS="spoolway:in-progress|1D76DB|spoolway: a task bound to this issue is queued or running
+spoolway:review|5319E7|spoolway: the bound task handed over a pull request
+spoolway:task|0E8A16|spoolway: closed by the workflow when its pull request merges"
+ENV_KEYS="RUN_REPORT_REPO FINDINGS_REPO MATERIALIZING_REPO PAGES_DIR PAGES_LOG PAGES_COMPILE_PATTERN PAGES_GATE PAGES_COMMIT_PREFIX PIN_DRIFT_PROTECTED"
+
+here=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+plugin_root=$(cd -P "$here/../.." && pwd)
+templates=$plugin_root/templates
+types=$plugin_root/spoolway/types
+config_dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+installed=$config_dir/plugins/installed_plugins.json
+
+die() { echo "spoolway-setup: $*" >&2; exit 1; }
+usage() {
+  echo "usage: setup.sh detect [<consumer>] | plan|apply <answers> [<consumer>] | labels <owner/repo> [--create] | bump <sha> [<consumer>]" >&2
+  exit 64
+}
+say() { printf '%s\n' "$*"; }
+
+consumer_dir() {
+  local c=${1:-}
+  if [ -z "$c" ]; then c=$(git rev-parse --show-toplevel 2> /dev/null) || die "not inside a git checkout; name the consumer"; fi
+  c=$(cd -P "$c" && pwd)
+  git -C "$c" rev-parse --git-dir > /dev/null 2>&1 || die "$c is not a git checkout"
+  printf '%s\n' "$c"
+}
+
+# --- reading ----------------------------------------------------------------------------------
+
+# answer <key>: the last value the answers file gives the key; all_answers <key>: every value.
+answer() { { grep -E "^$1=" "$answers" || true; } | tail -n 1 | cut -d= -f2-; }
+all_answers() { { grep -E "^$1=" "$answers" || true; } | cut -d= -f2-; }
+
+# env_value <file> <key>: as lib.sh's companion_env reads it, without the environment.
+env_value() {
+  local v
+  v=$({ grep -E "^$2=" "$1" 2> /dev/null || true; } | tail -n 1 | cut -d= -f2-)
+  v=${v%$'\r'}
+  v="${v%"${v##*[![:space:]]}"}"
+  case $v in \"*\" | \'*\') v=${v:1:${#v}-2} ;; esac
+  printf '%s\n' "$v"
+}
+env_has() { grep -qE "^$2=" "$1" 2> /dev/null; }
+
+# toml_value <key> under [issue_tracking]: the quoted or bare value, or nothing.
+toml_value() {
+  [ -f "$consumer/$CONFIG" ] || return 0
+  awk -v key="$1" '
+    /^\[/ { in_s = ($0 ~ /^\[issue_tracking\][[:space:]]*$/); next }
+    in_s && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      v = $0; sub(/^[^=]*=[[:space:]]*/, "", v); sub(/[[:space:]]*(#.*)?$/, "", v)
+      gsub(/^"|"$/, "", v); print v; exit
+    }' "$consumer/$CONFIG"
+}
+toml_has() {
+  [ -f "$consumer/$CONFIG" ] && awk -v key="$1" '
+    /^\[/ { in_s = ($0 ~ /^\[issue_tracking\][[:space:]]*$/); next }
+    in_s && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" { found = 1 } END { exit !found }' "$consumer/$CONFIG"
+}
+
+# plugin_pin <name>: the sha the consumer's settings pin a plugin of that name at, under any
+# marketplace; plugin_market <name>: that marketplace.
+plugin_pin() {
+  [ -f "$consumer/$SETTINGS" ] || return 0
+  jq -r --arg n "$1" '[(.extraKnownMarketplaces // {})[] | (.source.plugins // [])[] | select(.name == $n) | .source.sha // empty] | first // empty' "$consumer/$SETTINGS"
+}
+plugin_market() {
+  [ -f "$consumer/$SETTINGS" ] || return 0
+  jq -r --arg n "$1" '[(.extraKnownMarketplaces // {}) | to_entries[] | select(any(.value.source.plugins[]?; .name == $n)) | .key] | first // empty' "$consumer/$SETTINGS"
+}
+
+# record <plugin>@<marketplace> <field>: that field of the install record for this project path.
+record() {
+  [ -f "$installed" ] || return 0
+  jq -r --arg id "$1" --arg p "$consumer" --arg f "$2" '[(.plugins[$id] // [])[] | select(.projectPath == $p) | .[$f] // empty] | first // empty' "$installed"
+}
+
+# own_revision: the commit of the install this copy is, as types.sh reads it.
+own_revision() {
+  [ -f "$installed" ] || return 0
+  jq -r --arg root "$plugin_root" '[.plugins[]?[]? | select(.installPath == $root) | .gitCommitSha // empty] | first // empty' "$installed"
+}
+
+# old_plugin: the name of another plugin that owns this consumer's types, or nothing. Read from
+# the lock's `plugin` line, and from a `/<name>:spoolway-types` a gate or workflow names.
+old_plugin() {
+  local p=
+  if [ -f "$consumer/$LOCK" ]; then
+    p=$(sed -n 's/^plugin //p' "$consumer/$LOCK" | head -n 1)
+    [ "$p" = "$PLUGIN" ] && p=
+  fi
+  if [ -z "$p" ]; then
+    p=$(cd "$consumer" && git grep -h -o -E '/[A-Za-z0-9_.-]+:spoolway-types' -- scripts .github 2> /dev/null \
+      | sed -E 's#^/([^:]+):.*#\1#' | grep -vx "$PLUGIN" | head -n 1 || true)
+  fi
+  printf '%s\n' "$p"
+}
+
+# locked <path>: the lock lists the path, so it is the companion's to write.
+locked() { [ -f "$consumer/$LOCK" ] && cut -f2 "$consumer/$LOCK" | grep -qxF -- "$1"; }
+
+# template_target <path under templates/>: the consumer path it is copied to.
+template_target() {
+  case "$1" in setup/*) echo ".spoolway/${1#setup/}" ;; github/*) echo ".github/${1#github/}" ;; *) echo "$1" ;; esac
+}
+template_source() {
+  case "$1" in .spoolway/*) echo "$templates/setup/${1#.spoolway/}" ;; .github/*) echo "$templates/github/${1#.github/}" ;; *) echo "$templates/$1" ;; esac
+}
+
+# pipelines_taken: the pipelines this consumer takes, by name: the answer, else the subset or the
+# lock on disk, else every pipeline this revision ships.
+pipelines_taken() {
+  local list=
+  [ -n "${answers:-}" ] && list=$(answer pipelines)
+  if [ -n "$list" ] && [ "$list" != all ]; then tr ' ,' '\n\n' <<<"$list" | grep .; return; fi
+  if [ -z "$list" ]; then
+    for f in "$consumer/$SUBSET" "$consumer/$LOCK"; do
+      [ -f "$f" ] || continue
+      list=$(grep -oE '\.spoolway/pipelines/[^/[:space:]]+\.yml' "$f" | sed -E 's#.*/([^/]+)\.yml$#\1#' | LC_ALL=C sort -u)
+      [ -n "$list" ] && { printf '%s\n' "$list"; return; }
+    done
+  fi
+  find "$types/setup/pipelines" -name '*.yml' -printf '%f\n' | sed 's/\.yml$//' | LC_ALL=C sort
+}
+
+# consumer_scripts: the scripts/spoolway/*.sh the taken pipelines run that the companion does not
+# ship, so the consumer writes them.
+consumer_scripts() {
+  local p
+  for p in $(pipelines_taken); do
+    [ -f "$types/setup/pipelines/$p.yml" ] && grep -oE 'scripts/spoolway/[a-z0-9-]+\.sh' "$types/setup/pipelines/$p.yml"
+  done | LC_ALL=C sort -u | while read -r s; do cut -f2 "$plugin_root/spoolway/types.manifest" | grep -qxF "$s" || echo "$s"; done
+}
+
+# subset_for: the consumer paths the taken pipelines need: their pipeline files, the prompts they
+# name, the task template of the same name, and every path no pipeline owns.
+subset_for() {
+  local chosen all prompts_all prompts_chosen
+  chosen=$(pipelines_taken)
+  all=$(find "$types/setup/pipelines" -name '*.yml' -printf '%f\n' | sed 's/\.yml$//')
+  prompts_all=$(cat "$types"/setup/pipelines/*.yml | sed -n 's/^[[:space:]]*prompt:[[:space:]]*//p' | LC_ALL=C sort -u)
+  prompts_chosen=$(for p in $chosen; do sed -n 's/^[[:space:]]*prompt:[[:space:]]*//p' "$types/setup/pipelines/$p.yml"; done | LC_ALL=C sort -u)
+  cut -f2 "$plugin_root/spoolway/types.manifest" | while read -r path; do
+    case "$path" in
+      .spoolway/pipelines/*.yml)
+        n=${path##*/}; grep -qxF "${n%.yml}" <<<"$chosen" && echo "$path" ;;
+      .spoolway/prompts/*/*)
+        d=${path#.spoolway/prompts/}; d=${d%%/*}
+        if grep -qxF "$d" <<<"$prompts_all"; then grep -qxF "$d" <<<"$prompts_chosen" && echo "$path"; else echo "$path"; fi ;;
+      .spoolway/templates/tasks/*.md)
+        n=${path##*/}; n=${n%.md}
+        if grep -qxF "$n" <<<"$all"; then grep -qxF "$n" <<<"$chosen" && echo "$path"; else echo "$path"; fi ;;
+      *) echo "$path" ;;
+    esac
+  done
+}
+
+tracker_doc() {
+  local f=$consumer/docs/agents/issue-tracker.md
+  if [ ! -f "$f" ]; then echo missing
+  elif grep -qiE '^#+[[:space:]]+Wayfinding operations' "$f"; then echo present
+  else echo "present, no Wayfinding operations section"; fi
+}
+
+# --- detect -----------------------------------------------------------------------------------
+
+detect() {
+  local p f
+  say "consumer	$consumer"
+  say "branch	$(git -C "$consumer" rev-parse --abbrev-ref HEAD 2> /dev/null || echo none)"
+  p=$(old_plugin); say "old plugin	${p:-none}"
+  say "companion pin	$(plugin_pin "$PLUGIN" | grep . || echo none)"
+  say "companion install	$(record "$PLUGIN@$MARKETPLACE" gitCommitSha | grep . || echo none)"
+  if [ -f "$consumer/$LOCK" ]; then say "lock	$(sed -n 's/^plugin //p' "$consumer/$LOCK" | head -n 1) $(sed -n 's/^revision //p' "$consumer/$LOCK" | head -n 1)"; else say "lock	none"; fi
+  p=$(plugin_market wiki); say "wiki plugin	${p:+wiki@$p $(plugin_pin wiki)}${p:-none}"
+  if [ -f "$consumer/$PROJECTS" ]; then say "projects	present"; else say "projects	missing"; fi
+  if [ -f "$consumer/$SUBSET" ]; then say "types subset	present"; else say "types subset	missing"; fi
+  if [ -f "$consumer/$CONFIG" ]; then say "config	present"; else say "config	missing"; fi
+  for k in hook project_key; do
+    if toml_has "$k"; then say "issue_tracking.$k	$(toml_value "$k")"; else say "issue_tracking.$k	missing"; fi
+  done
+  for k in $ENV_KEYS; do
+    if env_has "$consumer/$ENV_FILE" "$k"; then say "env $k	$(env_value "$consumer/$ENV_FILE" "$k")"; else say "env $k	missing"; fi
+  done
+  for f in $(all_targets); do
+    if [ -e "$consumer/$f" ]; then say "file $f	present"; else say "file $f	missing"; fi
+  done
+  say "issue-tracker.md	$(tracker_doc)"
+  if [ -f "$consumer/docs/agents/triage-labels.md" ]; then say "triage-labels.md	present"; else say "triage-labels.md	missing"; fi
+}
+
+# all_targets: every consumer path setup may write from a template, plus the scripts with none.
+all_targets() {
+  { (cd "$templates" && find . -type f -printf '%P\n') | while read -r t; do template_target "$t"; done
+    consumer_scripts; } | LC_ALL=C sort -u
+}
+
+# --- writing ----------------------------------------------------------------------------------
+
+dry=0
+changed=0
+note() { say "$*"; }
+act() { changed=1; if [ $dry = 1 ]; then say "would: $*"; else say "$*"; fi; }
+
+ensure_branch() {
+  local want=$1 cur
+  cur=$(git -C "$consumer" rev-parse --abbrev-ref HEAD 2> /dev/null || echo HEAD)
+  [ "$cur" = "$want" ] && return 0
+  if [ $dry = 1 ]; then say "would switch to branch $want"; return 0; fi
+  if git -C "$consumer" show-ref --verify --quiet "refs/heads/$want"; then
+    git -C "$consumer" switch -q "$want"
+  else
+    git -C "$consumer" switch -q -c "$want"
+  fi
+  say "on branch $want"
+}
+
+# put_file <consumer path> <source file>: copy when missing, keep and report when present.
+put_file() {
+  local dst=$1 src=$2
+  if locked "$dst"; then note "kept $dst: plugin.lock lists it"; return; fi
+  if [ -e "$consumer/$dst" ]; then note "kept $dst: present"; return; fi
+  act "wrote $dst"
+  [ $dry = 1 ] && return
+  mkdir -p "$(dirname "$consumer/$dst")"
+  cp "$src" "$consumer/$dst"
+  [ -x "$src" ] && chmod 755 "$consumer/$dst"
+  return 0
+}
+
+put_text() {
+  local dst=$1 tmp
+  tmp=$(mktemp); cat > "$tmp"
+  put_file "$dst" "$tmp"
+  rm -f "$tmp"
+}
+
+env_quote() { case $1 in *[[:space:]\"\'\#\$\\\`\|\;\&\<\>\(\)\*\?\[]*) printf '"%s"' "$1" ;; *) printf '%s' "$1" ;; esac; }
+
+put_env() {
+  local key=$1 value=$2 f=$consumer/$ENV_FILE old
+  if env_has "$f" "$key"; then
+    old=$(env_value "$f" "$key")
+    [ "$old" = "$value" ] && note "kept $ENV_FILE $key: present" || note "kept $ENV_FILE $key: it is \"$old\", the answer was \"$value\"; change it by hand if you mean it"
+    return
+  fi
+  act "added $key to $ENV_FILE"
+  [ $dry = 1 ] && return
+  mkdir -p "$consumer/.spoolway"
+  if [ ! -f "$f" ]; then
+    printf '%s\n' "# Settings the spoolway-companion scripts read, one KEY=value per line, read with grep and never" \
+      "# sourced. An environment variable of the same name wins. Tracked: no private destination here." > "$f"
+  fi
+  printf '%s=%s\n' "$key" "$(env_quote "$value")" >> "$f"
+}
+
+put_toml() {
+  local key=$1 value=$2 f=$consumer/$CONFIG old
+  if [ ! -f "$f" ]; then note "skipped issue_tracking.$key: no $CONFIG; run \`spoolway init\` here, then setup again"; return; fi
+  if toml_has "$key"; then
+    old=$(toml_value "$key")
+    [ "$old" = "$value" ] && note "kept $CONFIG issue_tracking.$key: present" || note "kept $CONFIG issue_tracking.$key: it is \"$old\", the answer was \"$value\"; change it by hand if you mean it"
+    return
+  fi
+  act "added issue_tracking.$key to $CONFIG"
+  [ $dry = 1 ] && return
+  if grep -qE '^\[issue_tracking\][[:space:]]*$' "$f"; then
+    awk -v line="$key = \"$value\"" '{ print } /^\[issue_tracking\][[:space:]]*$/ { print line }' "$f" > "$f.new" && mv "$f.new" "$f"
+  else
+    printf '\n[issue_tracking]\n%s = "%s"\n' "$key" "$value" >> "$f"
+  fi
+}
+
+# put_plugin_entry <marketplace> <plugin> <url> <sha> [<ref>]: add the inline marketplace entry and
+# its enabledPlugins key when the plugin is pinned nowhere; never change an existing entry.
+put_plugin_entry() {
+  local market=$1 name=$2 url=$3 sha=$4 ref=${5:-} f=$consumer/$SETTINGS have
+  have=$(plugin_market "$name")
+  if [ -n "$have" ]; then
+    note "kept $SETTINGS entry $name@$have: present"
+  else
+    act "added $name@$market to $SETTINGS"
+    if [ $dry = 0 ]; then
+      mkdir -p "$consumer/.claude"
+      [ -f "$f" ] || echo '{}' > "$f"
+      jq --arg m "$market" --arg n "$name" --arg u "$url" --arg s "$sha" --arg r "$ref" '
+        .extraKnownMarketplaces //= {}
+        | .extraKnownMarketplaces[$m] //= {source: {source: "settings", name: $m, plugins: []}}
+        | .extraKnownMarketplaces[$m].source.plugins += [{name: $n, source: ({source: "git-subdir", url: $u, path: "claude-plugin"}
+            + (if $r == "" then {} else {ref: $r} end) + {sha: $s})}]' "$f" > "$f.new" && mv "$f.new" "$f"
+    fi
+    have=$market
+  fi
+  if [ -f "$f" ] && jq -e --arg k "$name@$have" '(.enabledPlugins // {}) | has($k)' "$f" > /dev/null; then
+    return
+  fi
+  act "enabled $name@$have in $SETTINGS"
+  [ $dry = 1 ] && return
+  jq --arg k "$name@$have" '.enabledPlugins //= {} | .enabledPlugins[$k] = true' "$f" > "$f.new" && mv "$f.new" "$f"
+}
+
+# install_plugin <plugin> <marketplace>: install it for this project path, or update the record
+# when its revision is not the pin. Reports a record the update left behind (plugin#32's lag).
+install_plugin() {
+  local id=$1@$2 pin rec verb
+  pin=$(plugin_pin "$1")
+  rec=$(record "$id" gitCommitSha)
+  if [ -n "$rec" ] && [ "$rec" = "$pin" ]; then note "kept the $id install: at ${pin:0:12}"; return 0; fi
+  verb=install; [ -n "$rec" ] && verb=update
+  if [ $dry = 1 ]; then act "$verb $id for this project path"; return 0; fi
+  if ! command -v claude > /dev/null; then
+    note "to do: no \`claude\` on PATH; run \`claude plugin $verb $id --scope project\` in $consumer, restart Claude Code"
+    return 1
+  fi
+  act "ran claude plugin $verb $id --scope project"
+  (cd "$consumer" && CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1 claude plugin "$verb" "$id" --scope project < /dev/null) || {
+    note "to do: \`claude plugin $verb $id --scope project\` failed above; it needs a signed-in, trusted folder"
+    return 1
+  }
+  rec=$(record "$id" gitCommitSha)
+  if [ "$rec" != "$pin" ]; then
+    note "to do: the $id record for this path is at ${rec:-nothing} after $verb, the pin is ${pin:0:12}. The marketplace already at the pin leaves a stale per-path record alone: repoint its installPath and gitCommitSha in $installed, then setup again"
+    return 1
+  fi
+}
+
+take_types() {
+  local old root lock_rev pin
+  old=$(old_plugin)
+  if [ -n "$old" ]; then note "kept the types: they belong to the $old plugin; its cut-over is its own work, so plugin.lock and its gate are untouched"; return; fi
+  pin=$(plugin_pin "$PLUGIN")
+  lock_rev=$( [ -f "$consumer/$LOCK" ] && sed -n 's/^revision //p' "$consumer/$LOCK" | head -n 1 || true)
+  if [ -n "$pin" ] && [ "$lock_rev" = "$pin" ]; then note "kept the types: $LOCK is at ${pin:0:12}"; return; fi
+  if [ $dry = 1 ]; then act "write the types at ${pin:0:12} through types.sh write"; return; fi
+  root=$(record "$PLUGIN@$MARKETPLACE" installPath)
+  [ -n "$root" ] && [ -x "$root/spoolway/types.sh" ] || { note "to do: no installed $PLUGIN for this path; install it, restart, and run /$PLUGIN:spoolway-types"; return; }
+  act "took the types:"
+  bash "$root/spoolway/types.sh" write "$consumer"
+}
+
+projects_doc() {
+  local topology=$1 extra root rule mat
+  extra=$(answer extra_repos); root=$(answer worktree_root); rule=$(answer repos_rule)
+  mat=$(answer MATERIALIZING_REPO)
+  printf '# Projects\n\nThe repositories spoolway works in. Pipeline prompts read this file; keep it current.\n\n'
+  printf '| Repository | Role |\n|---|---|\n| %s | this repository |\n' "$(answer project_key | grep . || echo "${consumer##*/}")"
+  for r in $extra; do printf '| %s | extra repository |\n' "$r"; done
+  printf '\n## The `repos` rule\n\n'
+  if [ "$topology" = multi ]; then
+    printf '%s\n' "${rule:-A task names in \`repos\` every repository its change touches, this one first.}"
+    printf '\nExtra repositories have their worktrees under `%s`.\n' "${root:-<worktree root>}"
+  else
+    printf 'This is a mono-repo: a task names no `repos`, or only this repository.\n'
+  fi
+  if [ -n "$mat" ]; then printf '\n## Materializing\n\nSpecs and their tickets live in `%s`.\n' "$mat"; fi
+  printf '\n## Private repositories\n\nA private destination stays in a machine-local file `COMPANION_ENV_FILE` names, never here.\n'
+}
+
+checks_script() {
+  local body
+  body=$(all_answers checks | grep . || true)
+  [ -n "$body" ] || body='echo "checks: no gate written yet; put your CI'"'"'s commands between the gates markers" >&2
+exit 1'
+  awk -v body="$body" '$0 == "@CHECKS@" { print body; next } { print }' "$templates/scripts/spoolway/checks.sh"
+}
+
+apply() {
+  local topology tracking key value s t old wiki sha
+  [ -f "$answers" ] || die "no answers file $answers"
+  topology=$(answer topology); topology=${topology:-mono}
+  # The pin: what the consumer has, else the answer, else the revision of this very copy.
+  sha=$(plugin_pin "$PLUGIN")
+  [ -n "$sha" ] || sha=$(answer companion_sha)
+  [ -n "$sha" ] || sha=$(own_revision)
+  [[ $sha =~ ^[0-9a-f]{40}$ ]] || die "no companion revision to pin: answer companion_sha with a full commit sha, or run this from the installed plugin. Nothing was written"
+  if [ "$(answer wiki)" = yes ] && [ -z "$(plugin_market wiki)" ] && [ -n "$(answer wiki_sha)" ] && ! [[ $(answer wiki_sha) =~ ^[0-9a-f]{40}$ ]]; then
+    die "wiki_sha \"$(answer wiki_sha)\" is no full commit sha. Nothing was written"
+  fi
+  old=$(old_plugin)
+  ensure_branch "$(answer branch | grep . || echo spoolway-companion-setup)"
+  [ -n "$old" ] && note "found the $old plugin: the companion goes in beside it and nothing of $old is touched"
+
+  # (1) topology
+  if [ -e "$consumer/$PROJECTS" ]; then note "kept $PROJECTS: present"; else projects_doc "$topology" | put_text "$PROJECTS"; fi
+  # (2) pipelines
+  if [ -n "$(answer pipelines)" ] && [ "$(answer pipelines)" != all ] && [ -z "$old" ]; then
+    if [ -e "$consumer/$SUBSET" ]; then note "kept $SUBSET: present"
+    else { echo "# The companion paths this consumer takes; see types.sh."; subset_for; } | put_text "$SUBSET"; fi
+  fi
+  # (3) issue tracking
+  tracking=$(answer issue_tracking)
+  if [ "$tracking" = yes ]; then
+    put_file .spoolway/hooks/github.sh "$templates/setup/hooks/github.sh"
+    put_file .github/workflows/spoolway-issues.yml "$templates/github/workflows/spoolway-issues.yml"
+    put_toml hook github.sh
+    [ -n "$(answer project_key)" ] && put_toml project_key "$(answer project_key)"
+  fi
+  # (4) and (5): destinations and wiki keys
+  while IFS= read -r line; do
+    key=${line%%=*}; value=${line#*=}
+    put_env "$key" "$value"
+  done < <(grep -E '^[A-Z][A-Z0-9_]*=' "$answers" || true)
+  # (6) consumer scripts
+  for s in $(consumer_scripts); do
+    case "$s" in
+      scripts/spoolway/checks.sh) checks_script | put_text "$s"; [ -e "$consumer/$s" ] && [ $dry = 0 ] && chmod 755 "$consumer/$s" ;;
+      scripts/spoolway/extra-*.sh)
+        if [ "$topology" = multi ] && [ ! -e "$consumer/$s" ]; then note "to do: write $s by hand: the companion's template serves a mono-repo only"
+        else put_file "$s" "$templates/$s"; fi ;;
+      *)
+        if [ -f "$templates/$s" ]; then put_file "$s" "$templates/$s"
+        elif [ -e "$consumer/$s" ]; then note "kept $s: present"
+        else note "to do: write $s by hand: the companion has no template for it yet"; fi ;;
+    esac
+  done
+
+  # the companion itself, and optional tools
+  put_plugin_entry "$MARKETPLACE" "$PLUGIN" "$(answer companion_url | grep . || echo "$COMPANION_URL")" "$sha"
+  wiki=$(answer wiki)
+  if [ "$wiki" = yes ]; then
+    if [ -z "$(plugin_market wiki)" ] && { [ -z "$(answer wiki_url)" ] || [ -z "$(answer wiki_sha)" ]; }; then
+      note "to do: llm-wiki needs wiki_url and wiki_sha to be pinned"
+    else
+      put_plugin_entry "$(answer wiki_marketplace | grep . || echo llm-wiki)" wiki "$(answer wiki_url)" "$(answer wiki_sha)" "$(answer wiki_ref)"
+    fi
+  fi
+  if install_plugin "$PLUGIN" "$MARKETPLACE"; then take_types; else note "to do: the types are not taken until the install is at the pin"; fi
+  [ -n "$(plugin_market wiki)" ] && [ "$wiki" = yes ] && { install_plugin wiki "$(plugin_market wiki)" || true; }
+
+  t=$(tracker_doc)
+  [ "$t" = present ] || note "to do: docs/agents/issue-tracker.md is $t; run /setup-matt-pocock-skills with the person's yes"
+  [ -f "$consumer/docs/agents/triage-labels.md" ] || note "to do: docs/agents/triage-labels.md is missing; run /setup-matt-pocock-skills with the person's yes"
+  if [ $changed = 0 ]; then say "nothing to add"
+  elif [ $dry = 0 ]; then say "left uncommitted on $(git -C "$consumer" rev-parse --abbrev-ref HEAD); review, commit and open the pull request yourself; restart Claude Code"; fi
+}
+
+# --- labels -----------------------------------------------------------------------------------
+
+labels() {
+  local repo=$1 create=${2:-} have name color desc missing=0
+  have=$(gh label list -R "$repo" --limit 500 --json name --jq '.[].name')
+  while IFS='|' read -r name color desc; do
+    if grep -qxF "$name" <<<"$have"; then say "kept label $name: present"; continue; fi
+    missing=1
+    if [ "$create" = --create ]; then
+      gh label create "$name" -R "$repo" --color "$color" --description "$desc" > /dev/null
+      say "created label $name"
+    else
+      say "would create label $name"
+    fi
+  done <<<"$LABELS"
+  [ $missing = 1 ] || say "every spoolway label is present"
+}
+
+# --- bump -------------------------------------------------------------------------------------
+
+bump() {
+  local new=$1 old count old_root new_root t src prev
+  [[ $new =~ ^[0-9a-f]{40}$ ]] || die "$new is no full commit sha"
+  old=$(plugin_pin "$PLUGIN")
+  [ -n "$old" ] || die "$consumer/$SETTINGS pins no $PLUGIN; run setup first"
+  ensure_branch "spoolway-companion-${new:0:12}"
+  old_root=$(record "$PLUGIN@$MARKETPLACE" installPath)
+  if [ "$old" = "$new" ]; then
+    note "kept the pin: already ${new:0:12}"
+  else
+    count=$(grep -o "$old" "$consumer/$SETTINGS" | wc -l)
+    [ "$count" -eq 1 ] || die "$SETTINGS names ${old:0:12} $count times; move the $PLUGIN sha by hand"
+    sed -i "s/$old/$new/" "$consumer/$SETTINGS"
+    act "moved the $PLUGIN pin ${old:0:12} -> ${new:0:12}"
+  fi
+  if ! install_plugin "$PLUGIN" "$MARKETPLACE"; then note "stopped before the types: the install is not at the pin"; return 0; fi
+  [ -n "$(plugin_market wiki)" ] && { install_plugin wiki "$(plugin_market wiki)" || true; }
+  take_types
+  new_root=$(record "$PLUGIN@$MARKETPLACE" installPath)
+  # what is new and missing
+  for s in $(consumer_scripts); do
+    if [ -e "$consumer/$s" ]; then continue; fi
+    if [ -f "$new_root/templates/$s" ]; then put_file "$s" "$new_root/templates/$s"; else note "to do: write $s by hand: the companion has no template for it yet"; fi
+  done
+  for k in $ENV_KEYS; do env_has "$consumer/$ENV_FILE" "$k" || note "unset $ENV_FILE key $k: add it if this consumer needs it"; done
+  # what changed upstream in the templates the consumer copied
+  for t in $(cd "$new_root/templates" && find . -type f -printf '%P\n' | LC_ALL=C sort); do
+    dst=$(template_target "$t")
+    [ -e "$consumer/$dst" ] || continue
+    src=$new_root/templates/$t
+    prev=
+    [ -n "$old_root" ] && [ "$old_root" != "$new_root" ] && [ -f "$old_root/templates/$t" ] && prev=$old_root/templates/$t
+    if [ -n "$prev" ]; then
+      cmp -s "$prev" "$src" && continue
+      say "template $t changed upstream; apply to $dst by hand:"
+      diff -u --label "a/$t" --label "b/$t" "$prev" "$src" || true
+    elif ! cmp -s "$consumer/$dst" "$src"; then
+      say "template $t differs from $dst (the previous template is gone, so this is your file against the new one):"
+      diff -u --label "a/$dst" --label "b/$t" "$consumer/$dst" "$src" || true
+    fi
+  done
+  say "left uncommitted on $(git -C "$consumer" rev-parse --abbrev-ref HEAD); restart Claude Code to load ${new:0:12}"
+}
+
+# --- main -------------------------------------------------------------------------------------
+
+command -v jq > /dev/null || die "jq is not installed"
+answers=
+case "${1:-}" in
+  detect) [ $# -le 2 ] || usage; consumer=$(consumer_dir "${2:-}"); detect ;;
+  plan) [ $# -ge 2 ] && [ $# -le 3 ] || usage; answers=$(cd "$(dirname "$2")" && pwd)/$(basename "$2"); consumer=$(consumer_dir "${3:-}"); dry=1; apply ;;
+  apply) [ $# -ge 2 ] && [ $# -le 3 ] || usage; answers=$(cd "$(dirname "$2")" && pwd)/$(basename "$2"); consumer=$(consumer_dir "${3:-}"); apply ;;
+  labels) [ $# -ge 2 ] && [ $# -le 3 ] || usage; labels "$2" "${3:-}" ;;
+  bump) [ $# -ge 2 ] && [ $# -le 3 ] || usage; consumer=$(consumer_dir "${3:-}"); bump "$2" ;;
+  *) usage ;;
+esac
