@@ -10,6 +10,8 @@ The companion knows nothing of any one project. A repository that consumes it fi
 its own behind named extension points: scripts of fixed names, a `companion.env` file and a
 `docs/agents/projects.md` catalogue.
 
+The project's vocabulary is in [GLOSSARY.md](GLOSSARY.md).
+
 ## Layout
 
 - `claude-plugin/` is the Claude Code plugin **`spoolway-companion`**.
