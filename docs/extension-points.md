@@ -115,7 +115,7 @@ the consumer's: the companion never writes or updates it.
 |---|---|---|---|
 | `extra-worktree.sh` | first step | a worktree on the task's branch name in each extra repository `repos` names | pass at once; see [multi-repo.md](multi-repo.md) |
 | `checks.sh` | after `implement` | the repository's checks, the same commands its CI runs on a pull request, in the task's worktree; with pages, also `pins.sh check` | required: a repository with no checks still has to say so in a script that passes |
-| `extra-handover.sh` | after `review`, before `handover` | push the branch and open the pull request in each extra repository, and wait for what must be green first | pass at once |
+| `extra-handover.sh` | after `review`, before `handover` | push the branch and open the pull request in each extra repository, and wait for what must be green first, within the step's `timeout` (45m, the `ci` step's) | pass at once |
 | `handover.sh` | after `extra-handover` | squash, push and open the task's pull request (typically `spoolway stack`), with no AI attribution and no closing keyword in its body; fail when no pull request is open afterwards | required |
 | `extra-cleanup.sh` | after `report`, before `collect` | remove the extra worktrees once their branches are on the remote; leave alone a worktree with unpushed work, and still pass | pass at once |
 
