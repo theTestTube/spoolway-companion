@@ -1,8 +1,10 @@
 # The setup skill
 
-> **Planned, not yet shipped.** This page describes the design of `spoolway-companion:setup`. Until
-> it ships, a consumer does the same by hand from [extension-points.md](extension-points.md),
-> [multi-repo.md](multi-repo.md) and [issue-tracking.md](issue-tracking.md).
+`/spoolway-companion:setup` is started by a person in the consumer's checkout. Its mechanical half
+is `claude-plugin/skills/setup/setup.sh` (`detect`, `plan`, `apply`, `labels`, `bump`), tested by
+`tests/spoolway-setup.test.sh`. A consumer can still do the same by hand from
+[extension-points.md](extension-points.md), [multi-repo.md](multi-repo.md) and
+[issue-tracking.md](issue-tracking.md).
 
 The setup skill writes the consumer side of every extension point into a repository, and moves an
 installed consumer to a newer pin. One skill does both: there is one entry point whether the
@@ -33,8 +35,10 @@ It asks, in order, one topic at a time, proposing an answer from what it found:
    tickets in. A private destination stays out of the tracked file, in the dispatcher machine's
    environment.
 5. **Pages**: the `PAGES_*` keys, and whether to install a page write path such as llm-wiki.
-6. **Scripts**: `checks.sh`, `handover.sh`, the `extra-*` scripts and the `materializing-*`
-   scripts, each written as a starting point for the consumer to finish.
+6. **Scripts**: `checks.sh` (with the commands the user's CI runs), `handover.sh` and the
+   `extra-*` scripts, each written from a template as a starting point for the consumer to finish.
+   The `extra-*` templates serve a mono-repo; a multi-repo's `extra-*` scripts and the
+   `materializing-*` scripts have no template yet, and setup names them as to do.
 
 Then it shows a summary of every file and key it will write, and writes nothing until the user
 confirms. It creates only the labels that are missing, and leaves its files uncommitted on a

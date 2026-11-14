@@ -269,10 +269,10 @@ Nothing is pulled in for you: a pipeline's prompts, its task template and every 
 steps run (`lib.sh` always, then `ci.sh`, `collect.sh`, `dod.sh`, `pins.sh`, `run-report.sh`,
 `feeding-back.sh`, `findings.sh` as the steps name them) must each be listed. `spoolway pipeline
 check` reports a step whose script or prompt is missing. Without the file, every path is taken.
-The file is the consumer's; the plugin never writes it. The companion's own
+The file is the consumer's: `types.sh` never writes it, and the setup skill writes it only when it is missing. The companion's own
 `.spoolway/types.subset` is a worked example.
 
 ## The issue-tracking hook
 
 `.spoolway/hooks/github.sh` and `.github/workflows/spoolway-issues.yml` are templates under
-`templates/`, copied once. See [issue-tracking.md](issue-tracking.md).
+`claude-plugin/templates/`, copied once. See [issue-tracking.md](issue-tracking.md).
