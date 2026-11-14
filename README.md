@@ -70,14 +70,20 @@ one that has another source.
 
 ## Extension points
 
-The pipelines name behaviours, never repositories. A consumer fills them in:
+The pipelines name behaviours, never repositories. A consumer fills them in. The full contract of
+each, the three-tier rule behind them and how `companion.env` is read are in
+[docs/extension-points.md](docs/extension-points.md); multi-repo tasks in
+[docs/multi-repo.md](docs/multi-repo.md); the GitHub issue hook in
+[docs/issue-tracking.md](docs/issue-tracking.md); the planned setup skill in
+[docs/setup.md](docs/setup.md).
 
 | Extension point | What the consumer provides | Without it |
 |---|---|---|
 | `scripts/spoolway/checks.sh` | the repository's checks, the same lines as its CI | required |
 | `scripts/spoolway/handover.sh` | push the branch and open the pull request | required |
 | `scripts/spoolway/extra-worktree.sh`, `extra-handover.sh`, `extra-cleanup.sh` | a worktree, a pull request and a cleanup in each extra repository a task's `repos` names | write them to pass at once and block a task naming more than one repository, as this repository's own do |
-| `.spoolway/companion.env` | `KEY=value` lines read by the shipped scripts (below); an environment variable that is set and not empty wins | every key takes its default |
+| `scripts/spoolway/materializing-bind.sh`, `materializing-backing.sh`, `materializing-drafts.sh`, `materializing-gates.sh`, `materializing-handover.sh` | the Materializing steps' checks and handover, exchanging files with the lanes | required by a consumer that runs Materializing |
+| `.spoolway/companion.env` | `KEY=value` lines read by the shipped scripts (below); an environment variable that is set and not empty wins | each key's own, in the table below |
 | `docs/agents/projects.md` | the projects, the rule for `repos`, and any private feedback repository | the project is the repository itself |
 | `.spoolway/hooks/github.sh` | the issue-tracking hook, copied from `templates/` | tasks still run; no `spoolway:*` labels, no close on merge, no issue reads |
 
@@ -87,11 +93,11 @@ The pipelines name behaviours, never repositories. A consumer fills them in:
 |---|---|---|
 | `PAGES_DIR` | `pins.sh`, the prompts | a directory of pages that cite code and carry pins; unset means no page step runs and `pins.sh` passes at once |
 | `PAGES_GATE` | `pins.sh` | the command that names stale pages (default `scripts/gates/run.sh stale-pages`) |
-| `PAGES_LOG`, `PAGES_COMPILE_PATTERN` | `pins.sh` | the log a page compile writes, and the pattern of its entry |
+| `PAGES_LOG`, `PAGES_COMPILE_PATTERN` | `pins.sh` | the log a page compile writes, and the pattern of its entry; no log means no check that a page was compiled, not edited by hand |
 | `PAGES_COMMIT_PREFIX` | `pins.sh` | the subject prefix of the pin commit |
-| `PIN_DRIFT_PROTECTED` | `hooks/pin-drift` | the path writes are denied under while the install drifts |
-| `RUN_REPORT_REPO` | `run-report.sh` | where run reports are filed |
-| `FINDINGS_REPO` | `findings.sh` | where the weekly digest lives |
+| `PIN_DRIFT_PROTECTED` | `hooks/pin-drift` | the path writes are denied under while the install drifts; unset means no denial |
+| `RUN_REPORT_REPO` | `run-report.sh` | where run reports are filed; unset means the run's own repository |
+| `FINDINGS_REPO` | `findings.sh` | where the weekly digest lives; unset means the run's own repository |
 
 `COMPANION_ENV_FILE` names another file than `.spoolway/companion.env`.
 
