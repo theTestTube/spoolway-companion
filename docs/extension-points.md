@@ -59,8 +59,8 @@ directory, trailing blanks, a leading `./` and a trailing `/` taken off. It does
 | `PAGES_COMPILE_PATTERN` | `pins.sh` | the `sed` pattern that, at the start of a log line the branch added, precedes the compiled page names | `## \[[0-9-]*\] compile \| ` (quote it in the file: it ends in a blank) |
 | `PAGES_COMMIT_PREFIX` | `pins.sh` | the subject prefix of the pin commit | `docs(pages):` |
 | `PIN_DRIFT_PROTECTED` | `hooks/pin-drift` | the path under which `Write` and `Edit` are denied while the installed plugin differs from the pin | no denial; the drift warning still shows |
-| `RUN_REPORT_REPO` | `run-report.sh`, the Feeding-back intake | the `owner/repo` run reports are filed in and read from | the run's own repository, as `gh` reads it from the checkout (`SPOOLWAY_REPO` when set); the step fails when `gh` cannot tell |
-| `FINDINGS_REPO` | `findings.sh` | the `owner/repo` that holds the open "Weekly digest" issue | the run's own repository, as above; the step refuses when `gh` cannot tell |
+| `RUN_REPORT_REPO` | `run-report.sh`, the Feeding-back intake (through `run-report.sh repo`) | the report repository, named `[HOST/]OWNER/REPO` as `gh --repo` takes it (a name, not a path or a URL), that run reports are filed in and read from | the run repository, as `gh` reads it from the checkout (`SPOOLWAY_REPO` when set); the step fails when `gh` cannot tell |
+| `FINDINGS_REPO` | `findings.sh` | the repository, named `[HOST/]OWNER/REPO` as above, that holds the open "Weekly digest" issue | the run repository, as above; the step refuses when `gh` cannot tell |
 
 The `PAGES_*` keys other than `PAGES_DIR` matter only once `PAGES_DIR` is set.
 
