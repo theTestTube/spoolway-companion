@@ -15,12 +15,16 @@ its own behind named extension points: scripts of fixed names, a `companion.env`
 - `claude-plugin/` is the Claude Code plugin **`spoolway-companion`**.
   - `skills/spoolway-types/` (`/spoolway-companion:spoolway-types`) writes the pipeline types into
     a consumer.
+  - `skills/setup/` (`/spoolway-companion:setup`) sets a consumer up for the companion, or moves
+    it to a new companion revision.
   - `skills/spoolway-repair/` (`/spoolway-companion:spoolway-repair <task-id>`) repairs a stuck task.
   - `hooks/pin-drift` warns when the installed plugin is not the commit the consumer pins.
   - `spoolway/types/` is the one definition of the pipeline types.
-- `templates/` holds files a consumer copies once and owns from then on: the `github.sh`
-  issue-tracking hook and the `spoolway-issues.yml` workflow that closes a task's issue when its
-  pull request merges.
+  - `templates/` holds files a consumer copies once and owns from then on, laid out like the
+    consumer with `setup/` for `.spoolway/` and `github/` for `.github/`: the `github.sh`
+    issue-tracking hook, the `spoolway-issues.yml` workflow that closes a task's issue when its
+    pull request merges, and the `checks`, `handover` and mono-repo `extra-*` consumer scripts.
+    `/spoolway-companion:setup` copies them; nothing ever updates a copy.
 - `tests/` holds the tests. They are outside `claude-plugin/`, so they are not installed.
 - `.spoolway/`, `scripts/` and `.github/` make this repository a consumer of its own types.
 
@@ -63,6 +67,10 @@ claude plugin install spoolway-companion@spoolway-companion --scope project
 After every pin bump: `claude plugin update spoolway-companion@spoolway-companion --scope project`,
 restart Claude Code, then run `/spoolway-companion:spoolway-types`.
 
+`/spoolway-companion:setup` does all of this for a person: on a first install it interviews them
+and writes the entry, the install, the types and the consumer files below; on a bump it moves the
+pin and does the rest (see Skills).
+
 This repository also publishes `.claude-plugin/marketplace.json`, named
 `spoolway-companion-catalog`, for those who follow a `ref` instead of a pin. Its name differs from
 the inline marketplace on purpose: a repository marketplace may not share its name with an inline
@@ -74,7 +82,7 @@ The pipelines name behaviours, never repositories. A consumer fills them in. The
 each, the three-tier rule behind them and how `companion.env` is read are in
 [docs/extension-points.md](docs/extension-points.md); multi-repo tasks in
 [docs/multi-repo.md](docs/multi-repo.md); the GitHub issue hook in
-[docs/issue-tracking.md](docs/issue-tracking.md); the planned setup skill in
+[docs/issue-tracking.md](docs/issue-tracking.md); the setup skill in
 [docs/setup.md](docs/setup.md).
 
 | Extension point | What the consumer provides | Without it |
@@ -85,7 +93,7 @@ each, the three-tier rule behind them and how `companion.env` is read are in
 | `scripts/spoolway/materializing-bind.sh`, `materializing-backing.sh`, `materializing-drafts.sh`, `materializing-gates.sh`, `materializing-handover.sh` | the Materializing steps' checks and handover, exchanging files with the lanes | required by a consumer that runs Materializing |
 | `.spoolway/companion.env` | `KEY=value` lines read by the shipped scripts (below); an environment variable that is set and not empty wins | each key's own, in the table below |
 | `docs/agents/projects.md` | the projects, the rule for `repos`, and any private feedback repository | the project is the repository itself |
-| `.spoolway/hooks/github.sh` | the issue-tracking hook, copied from `templates/` | tasks still run; no `spoolway:*` labels, no close on merge, no issue reads |
+| `.spoolway/hooks/github.sh` | the issue-tracking hook, copied from `claude-plugin/templates/` | tasks still run; no `spoolway:*` labels, no close on merge, no issue reads |
 
 `companion.env` keys:
 
@@ -98,6 +106,7 @@ each, the three-tier rule behind them and how `companion.env` is read are in
 | `PIN_DRIFT_PROTECTED` | `hooks/pin-drift` | the path writes are denied under while the install drifts; unset means no denial |
 | `RUN_REPORT_REPO` | `run-report.sh` | where run reports are filed; unset means the run's own repository |
 | `FINDINGS_REPO` | `findings.sh` | where the weekly digest lives; unset means the run's own repository |
+| `MATERIALIZING_REPO` | `/spoolway-companion:setup` only | the repository of Materializing's specs; the prompts read it from `docs/agents/projects.md`, where setup writes it too |
 
 `COMPANION_ENV_FILE` names another file than `.spoolway/companion.env`.
 
@@ -120,6 +129,20 @@ The hook never blocks the session. It cannot report its own missing install, bec
 until the plugin is installed. Run the tests with `tests/pin-drift.test.sh` (needs `bash` and `jq`).
 
 ## Skills
+
+**`/spoolway-companion:setup`**, which only a person can start, sets a consumer up. Detection runs
+first and every question the disk answers is skipped; the interview then goes topology, pipelines,
+issue tracking, destinations, wiki, then the `checks` and `handover` commands, and ends with a
+summary the person confirms. It never overwrites a consumer file: in an existing
+`.claude/settings.json`, `.spoolway/config.toml` or `.spoolway/companion.env` it only adds missing
+keys or entries, and reports a differing value. It never writes a path `plugin.lock` lists but
+through `types.sh write`, and leaves everything uncommitted on a branch. A consumer whose types
+another plugin owns is reported, and the companion goes in beside it without touching that
+plugin, its entry, its lock or its gate. Given a new revision, it moves only the `sha` of the
+companion's own entry, installs or updates per project path, retakes the types, adds what is
+missing and prints a diff for every copied template that changed. Its mechanical half is
+`skills/setup/setup.sh` (`detect`, `plan`, `apply`, `labels`, `bump`); the `materializing-*`
+scripts and a multi-repo's `extra-*` scripts have no template yet and are named as to do.
 
 **`/spoolway-companion:spoolway-repair <task-id>`**, which only a person can start, diagnoses a doomed spoolway task, salvages what cleanup would destroy, and advances or retreats it with the person. has no description and is hidden from the model, so a session that
 never invokes it carries no trace of it. Its mechanical reads live in
@@ -183,6 +206,9 @@ types, written by the plugin at the revision it pins:
   is taken.
 - The pipeline files are identical in every consumer. A repository's differences live behind the
   extension points above.
+
+`tests/spoolway-setup.test.sh` runs `setup.sh` against throwaway consumers with a stub `claude`
+in a throwaway `CLAUDE_CONFIG_DIR` and a fake `gh` whose calls it compares byte for byte.
 
 Run the tests with `tests/spoolway-types.test.sh` (needs `bash`, `git`, `jq` and `sha256sum`).
 

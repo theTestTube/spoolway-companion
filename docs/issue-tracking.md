@@ -4,8 +4,8 @@ The pipelines run without an issue tracker. What the companion adds for GitHub i
 spoolway hook and one workflow, both templates a consumer copies once and then owns: the companion
 never updates either, and a pin bump never touches them.
 
-- `templates/github.sh` → `.spoolway/hooks/github.sh`
-- `templates/spoolway-issues.yml` → `.github/workflows/spoolway-issues.yml`
+- `claude-plugin/templates/setup/hooks/github.sh` → `.spoolway/hooks/github.sh`
+- `claude-plugin/templates/github/workflows/spoolway-issues.yml` → `.github/workflows/spoolway-issues.yml`
 
 Turn the hook on in `.spoolway/config.toml`:
 
@@ -68,11 +68,12 @@ prompts can follow.
 
 The hook and the workflow assume the three `spoolway:*` labels exist in the repository that holds
 the issues, and the Architecting and Materializing pipelines read `wayfinder:*` and triage labels.
-Create them once; the setup skill ([setup.md](setup.md)) is planned to create only the missing
+Create them once; the setup skill ([setup.md](setup.md)) creates only the missing
 ones.
 
 ## Keeping the templates current
 
 Because the copies are the consumer's, a newer template does not reach them. When the companion
-changes a template, its release notes say so; compare with `diff templates/github.sh
+changes a template, its release notes say so; compare with `diff claude-plugin/templates/setup/hooks/github.sh
 .spoolway/hooks/github.sh` from a checkout of the companion at the new pin and take what you want.
+The setup skill's bump prints that diff for every copied template.
