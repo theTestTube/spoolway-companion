@@ -71,9 +71,11 @@ the first.
 ### Keys a consumer adds for its own scripts
 
 A consumer may add any key its own scripts read, with the same reader: source `lib.sh` and call
-`companion_env MY_KEY`. The companion ignores keys it does not know. Typical ones: the root under
-which extra worktrees are cut ([multi-repo.md](multi-repo.md)), the repository Materializing opens
-tickets in when it is not the run's own. When such a script cannot work without its key, it fails
+`companion_env MY_KEY`. The companion ignores keys it does not know. Typical ones: the repository
+Materializing opens tickets in when it is not the run's own. The `extra-*` templates setup writes
+read two: `EXTRA_REPOS`, the extra repositories, and `EXTRA_WORKTREE_ROOT`, the root their
+worktrees are cut under ([multi-repo.md](multi-repo.md#the-companions-templates)); setup writes
+both for a multi-repo, and with `EXTRA_REPOS` unset those scripts behave as a mono-repo's. When such a script cannot work without its key, it fails
 with a line starting `ENVIRONMENT:` naming the key, rather than guessing a value: that way the task
 blocks with a reason a person can act on.
 
@@ -115,7 +117,7 @@ the consumer's: the companion never writes or updates it.
 |---|---|---|---|
 | `extra-worktree.sh` | first step | a worktree on the task's branch name in each extra repository `repos` names | pass at once; see [multi-repo.md](multi-repo.md) |
 | `checks.sh` | after `implement` | the repository's checks, the same commands its CI runs on a pull request, in the task's worktree; with pages, also `pins.sh check` | required: a repository with no checks still has to say so in a script that passes |
-| `extra-handover.sh` | after `review`, before `handover` | push the branch and open the pull request in each extra repository, and wait for what must be green first | pass at once |
+| `extra-handover.sh` | after `review`, before `handover` | push the branch and open the pull request in each extra repository, and wait for what must be green first, within the step's `timeout` (45m, the `ci` step's) | pass at once |
 | `handover.sh` | after `extra-handover` | squash, push and open the task's pull request (typically `spoolway stack`), with no AI attribution and no closing keyword in its body; fail when no pull request is open afterwards | required |
 | `extra-cleanup.sh` | after `report`, before `collect` | remove the extra worktrees once their branches are on the remote; leave alone a worktree with unpushed work, and still pass | pass at once |
 
@@ -129,7 +131,8 @@ The shipped steps `pin` (`pins.sh pin`), `ci` (`ci.sh`), `signals` (`run-report.
 
 ### Materializing
 
-The five `materializing-*` scripts are the consumer's. Each exchanges files with a lane through the
+The five `materializing-*` scripts are the consumer's, written once by setup from
+`claude-plugin/templates/scripts/spoolway/`. Each exchanges files with a lane through the
 task's scratch space; the formats below are what the shipped prompts write and read.
 
 | Script | Step | Reads | Writes | Fails to |

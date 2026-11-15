@@ -37,8 +37,10 @@ It asks, in order, one topic at a time, proposing an answer from what it found:
 5. **Pages**: the `PAGES_*` keys, and whether to install a page write path such as llm-wiki.
 6. **Scripts**: `checks.sh` (with the commands the user's CI runs), `handover.sh` and the
    `extra-*` scripts, each written from a template as a starting point for the consumer to finish.
-   The `extra-*` templates serve a mono-repo; a multi-repo's `extra-*` scripts and the
-   `materializing-*` scripts have no template yet, and setup names them as to do.
+   The `extra-*` templates serve both topologies: for a multi-repo, setup also writes the
+   `extra_repos` and `worktree_root` answers into `.spoolway/companion.env` as `EXTRA_REPOS` and
+   `EXTRA_WORKTREE_ROOT`, which they read ([multi-repo.md](multi-repo.md#the-companions-templates)).
+   With Materializing taken, setup also writes its five `materializing-*` scripts.
 
 7. **Memex upkeep**: whether and when `memex index` runs to keep the memory index's vectors
    current (`none`, `hourly`, or `boot`, one pass 3 minutes after the user session starts), and
