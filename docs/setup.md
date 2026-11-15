@@ -37,8 +37,9 @@ It asks, in order, one topic at a time, proposing an answer from what it found:
 5. **Pages**: the `PAGES_*` keys, and whether to install a page write path such as llm-wiki.
 6. **Scripts**: `checks.sh` (with the commands the user's CI runs), `handover.sh` and the
    `extra-*` scripts, each written from a template as a starting point for the consumer to finish.
-   The `extra-*` templates serve a mono-repo; a multi-repo's `extra-*` scripts and the
-   `materializing-*` scripts have no template yet, and setup names them as to do.
+   With Materializing taken, its five `materializing-*` scripts too. The `extra-*` templates
+   serve a mono-repo; a multi-repo's `extra-*` scripts have no template yet, and setup names them
+   as to do.
 
 Then it shows a summary of every file and key it will write, and writes nothing until the user
 confirms. It creates only the labels that are missing, and leaves its files uncommitted on a

@@ -186,8 +186,13 @@ check "multi: projects.md lists the extra repositories, the rule and the worktre
   'grep -q "acme/api" "$c/docs/agents/projects.md" && grep -q "acme/infra" "$c/docs/agents/projects.md" && grep -q "this one first" "$c/docs/agents/projects.md" && grep -q "../worktrees" "$c/docs/agents/projects.md" && grep -q "acme/specs" "$c/docs/agents/projects.md"'
 check "multi: the mono-repo extra-* templates are not written, and are named to do" \
   '[ ! -e "$c/scripts/spoolway/extra-worktree.sh" ] && grep -q "to do: write scripts/spoolway/extra-worktree.sh by hand" <<<"$out"' "$out"
-check "multi: materializing-* scripts are named to do, every pipeline taken" \
-  'grep -q "to do: write scripts/spoolway/materializing-bind.sh by hand" <<<"$out" && [ ! -e "$c/.spoolway/types.subset" ] && [ -f "$c/.spoolway/pipelines/materializing.yml" ]' "$out"
+check "multi: every pipeline is taken" '[ ! -e "$c/.spoolway/types.subset" ] && [ -f "$c/.spoolway/pipelines/materializing.yml" ]' "$out"
+materializing_copied=1
+for s in bind backing drafts gates handover; do
+  f=scripts/spoolway/materializing-$s.sh
+  { cmp -s "$c/$f" "$templates/$f" && [ -x "$c/$f" ] && grep -q "Written once by /spoolway-companion:setup" "$c/$f" && ! grep -q "to do: write $f" <<<"$out"; } || materializing_copied=
+done
+check "multi: the five materializing-* scripts are the templates, byte for byte, executable, and not named to do" '[ -n "$materializing_copied" ]' "$out"
 check "multi: no issue hook without issue tracking" '[ ! -e "$c/.spoolway/hooks/github.sh" ] && ! grep -q issue_tracking "$c/.spoolway/config.toml"'
 check "multi: MATERIALIZING_REPO lands in companion.env" '[ "$(envval "$c" MATERIALIZING_REPO)" = acme/specs ]'
 
@@ -253,9 +258,12 @@ commit_all "$c" "take the companion"
 rm "$c/scripts/spoolway/handover.sh"; commit_all "$c" "drop a script"
 # The settings as a person formats them, not as jq would: four-space indent, keys out of order.
 jq --indent 4 '{enabledPlugins, extraKnownMarketplaces}' "$c/.claude/settings.json" | sed 's/": /" :  /' > "$c/.claude/settings.json.new" && mv "$c/.claude/settings.json.new" "$c/.claude/settings.json"
+# A consumer that took Materializing holds its scripts; the bump diffs what it copied.
+cp -p "$templates/scripts/spoolway/materializing-drafts.sh" "$c/scripts/spoolway/"
 commit_all "$c" "format"
 cp -a "$repo/claude-plugin" "$STUB_SOURCES/$NEW"
 printf '# a line the new revision adds\n' >> "$STUB_SOURCES/$NEW/templates/setup/hooks/github.sh"
+printf '# a line the new revision adds to drafts\n' >> "$STUB_SOURCES/$NEW/templates/scripts/spoolway/materializing-drafts.sh"
 cp "$c/.spoolway/hooks/github.sh" "$work/github.sh.before"
 
 out=$(bash "$setup" bump "$NEW" "$c" 2>&1); status=$?
@@ -267,6 +275,8 @@ check "bump retakes the types and the lock" 'grep -qx "revision $NEW" "$c/.spool
 check "bump writes back a missing consumer script" '[ -x "$c/scripts/spoolway/handover.sh" ]' "$out"
 check "bump prints the template's change and leaves the consumer's copy alone" \
   'grep -q "^+# a line the new revision adds" <<<"$out" && grep -q "template setup/hooks/github.sh changed upstream" <<<"$out" && cmp -s "$c/.spoolway/hooks/github.sh" "$work/github.sh.before"' "$out"
+check "bump prints a materializing template's change" \
+  'grep -q "^+# a line the new revision adds to drafts" <<<"$out" && grep -q "scripts/spoolway/materializing-drafts.sh" <<<"$out"' "$out"
 check "bump works on its own branch and commits nothing" '[ "$(git -C "$c" rev-parse --abbrev-ref HEAD)" = spoolway-companion-${NEW:0:12} ] && [ -n "$(git -C "$c" status --porcelain)" ] && [ "$(git -C "$c" log -1 --format=%s)" = format ]'
 
 commit_all "$c" "bumped"
