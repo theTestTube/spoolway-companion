@@ -184,8 +184,10 @@ out=$(bash "$setup" apply "$work/multi.answers" "$c" 2>&1); status=$?
 check "multi: apply passes" '[ $status -eq 0 ]' "$out"
 check "multi: projects.md lists the extra repositories, the rule and the worktree root" \
   'grep -q "acme/api" "$c/docs/agents/projects.md" && grep -q "acme/infra" "$c/docs/agents/projects.md" && grep -q "this one first" "$c/docs/agents/projects.md" && grep -q "../worktrees" "$c/docs/agents/projects.md" && grep -q "acme/specs" "$c/docs/agents/projects.md"'
-check "multi: the mono-repo extra-* templates are not written, and are named to do" \
-  '[ ! -e "$c/scripts/spoolway/extra-worktree.sh" ] && grep -q "to do: write scripts/spoolway/extra-worktree.sh by hand" <<<"$out"' "$out"
+check "multi: the extra-* templates are written, byte for byte and executable, and not named to do" \
+  'for s in extra-worktree extra-handover extra-cleanup; do cmp -s "$c/scripts/spoolway/$s.sh" "$templates/scripts/spoolway/$s.sh" && [ -x "$c/scripts/spoolway/$s.sh" ] || exit 1; done; ! grep -q "to do: write scripts/spoolway/extra-" <<<"$out"' "$out"
+check "multi: the extra repositories and their worktree root land in companion.env" \
+  '[ "$(envval "$c" EXTRA_REPOS)" = "acme/api acme/infra" ] && [ "$(envval "$c" EXTRA_WORKTREE_ROOT)" = ../worktrees ]' "$(cat "$c/.spoolway/companion.env")"
 check "multi: every pipeline is taken" '[ ! -e "$c/.spoolway/types.subset" ] && [ -f "$c/.spoolway/pipelines/materializing.yml" ]' "$out"
 materializing_copied=1
 for s in bind backing drafts gates handover; do
@@ -193,6 +195,10 @@ for s in bind backing drafts gates handover; do
   { cmp -s "$c/$f" "$templates/$f" && [ -x "$c/$f" ] && grep -q "Written once by /spoolway-companion:setup" "$c/$f" && ! grep -q "to do: write $f" <<<"$out"; } || materializing_copied=
 done
 check "multi: the five materializing-* scripts are the templates, byte for byte, executable, and not named to do" '[ -n "$materializing_copied" ]' "$out"
+printf 'topology=multi\ncompanion_sha=%s\n' "$REV" > "$work/multi-bare.answers"
+out=$(bash "$setup" apply "$work/multi-bare.answers" "$(consumer multi-bare)" 2>&1)
+check "multi: without extra_repos or worktree_root, both keys are named to do" \
+  'grep -q "to do: topology is multi and extra_repos is empty" <<<"$out" && grep -q "to do: topology is multi and worktree_root is empty" <<<"$out"' "$out"
 check "multi: no issue hook without issue tracking" '[ ! -e "$c/.spoolway/hooks/github.sh" ] && ! grep -q issue_tracking "$c/.spoolway/config.toml"'
 check "multi: MATERIALIZING_REPO lands in companion.env" '[ "$(envval "$c" MATERIALIZING_REPO)" = acme/specs ]'
 
