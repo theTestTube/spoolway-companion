@@ -131,7 +131,8 @@ The shipped steps `pin` (`pins.sh pin`), `ci` (`ci.sh`), `signals` (`run-report.
 
 ### Materializing
 
-The five `materializing-*` scripts are the consumer's. Each exchanges files with a lane through the
+The five `materializing-*` scripts are the consumer's, written once by setup from
+`claude-plugin/templates/scripts/spoolway/`. Each exchanges files with a lane through the
 task's scratch space; the formats below are what the shipped prompts write and read.
 
 | Script | Step | Reads | Writes | Fails to |

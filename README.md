@@ -143,8 +143,8 @@ another plugin owns is reported, and the companion goes in beside it without tou
 plugin, its entry, its lock or its gate. Given a new revision, it moves only the `sha` of the
 companion's own entry, installs or updates per project path, retakes the types, adds what is
 missing and prints a diff for every copied template that changed. Its mechanical half is
-`skills/setup/setup.sh` (`detect`, `plan`, `apply`, `labels`, `bump`); the `materializing-*`
-scripts have no template yet and are named as to do.
+`skills/setup/setup.sh` (`detect`, `plan`, `apply`, `labels`, `bump`); a consumer that takes
+Materializing gets its five `materializing-*` scripts from the templates.
 
 **`/spoolway-companion:spoolway-repair <task-id>`**, which only a person can start, diagnoses a doomed spoolway task, salvages what cleanup would destroy, and advances or retreats it with the person. has no description and is hidden from the model, so a session that
 never invokes it carries no trace of it. Its mechanical reads live in

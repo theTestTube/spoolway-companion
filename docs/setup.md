@@ -40,7 +40,7 @@ It asks, in order, one topic at a time, proposing an answer from what it found:
    The `extra-*` templates serve both topologies: for a multi-repo, setup also writes the
    `extra_repos` and `worktree_root` answers into `.spoolway/companion.env` as `EXTRA_REPOS` and
    `EXTRA_WORKTREE_ROOT`, which they read ([multi-repo.md](multi-repo.md#the-companions-templates)).
-   The `materializing-*` scripts have no template yet, and setup names them as to do.
+   With Materializing taken, setup also writes its five `materializing-*` scripts.
 
 Then it shows a summary of every file and key it will write, and writes nothing until the user
 confirms. It creates only the labels that are missing, and leaves its files uncommitted on a
