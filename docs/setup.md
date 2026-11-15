@@ -1,7 +1,7 @@
 # The setup skill
 
 `/spoolway-companion:setup` is started by a person in the consumer's checkout. Its mechanical half
-is `claude-plugin/skills/setup/setup.sh` (`detect`, `plan`, `apply`, `labels`, `bump`), tested by
+is `claude-plugin/skills/setup/setup.sh` (`detect`, `plan`, `apply`, `labels`, `bump`, `memex`), tested by
 `tests/spoolway-setup.test.sh`. A consumer can still do the same by hand from
 [extension-points.md](extension-points.md), [multi-repo.md](multi-repo.md) and
 [issue-tracking.md](issue-tracking.md).
@@ -42,9 +42,36 @@ It asks, in order, one topic at a time, proposing an answer from what it found:
    `EXTRA_WORKTREE_ROOT`, which they read ([multi-repo.md](multi-repo.md#the-companions-templates)).
    With Materializing taken, setup also writes its five `materializing-*` scripts.
 
+7. **Memex upkeep**: whether and when `memex index` runs to keep the memory index's vectors
+   current (`none`, `hourly`, or `boot`, one pass 3 minutes after the user session starts), and
+   the value of `auto_index_on_search`. See [Memex upkeep](#memex-upkeep).
+
 Then it shows a summary of every file and key it will write, and writes nothing until the user
 confirms. It creates only the labels that are missing, and leaves its files uncommitted on a
 branch for the user to review.
+
+## Memex upkeep
+
+Unlike everything above, this part is the machine's, not the checkout's: `setup.sh memex plan` and
+`setup.sh memex apply` write memex's `~/.memex/config.toml` and the user's systemd timer, and none
+of it shows in `git status` or the pull request. The same rule holds: it adds what is missing,
+reports a differing value and keeps it, and it never removes a timer. Answers are the lower-case
+keys `memex_schedule` and `memex_auto_index_on_search`.
+
+- **Schedule.** `hourly` and `boot` install the timer through `memex daemon enable --interval 3600`
+  and a resource-limits drop-in; `boot` adds a timer drop-in that replaces the hourly trigger with
+  `OnStartupSec=3min`. Installing the timer starts it, so one pass runs right away. Each pass loads
+  the embedding model (about 3 GB of RAM for under a minute with the default model), which is why
+  `boot` is the recommended answer on a memory-tight machine. A timer runs plain `memex index`, so
+  setup also turns `embeddings` on. An index with fewer than 1000 vectors gets no timer: its first
+  pass is a full backfill that the limits would throttle, so setup asks for it by hand first.
+- **`auto_index_on_search`.** With `true`, every search re-scans the history and indexes what is
+  new; with `false` a search only reads. The default follows the schedule: `false` when a timer
+  exists, because the timer is then the one writer (memex's own `daemon enable` adds the same
+  value, with the note "Background indexing handles freshness; avoid duplicate scan work during
+  search"), and `true` when nothing is scheduled, because nothing else would refresh the index. The
+  cost of `false` with `boot` is that a search can miss the current session's work until the next
+  login or a manual `memex index`.
 
 ## A version bump
 

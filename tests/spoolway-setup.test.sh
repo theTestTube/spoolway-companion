@@ -23,6 +23,8 @@ pass() { printf 'ok   %s\n' "$1"; }
 fail() { printf 'FAIL %s\n' "$1"; [ -n "${2:-}" ] && printf '     %s\n' "$2"; failures=$((failures + 1)); }
 check() { if eval "$2"; then pass "$1"; else fail "$1" "${3:-}"; fi; }
 
+export HOME="$work/home"
+mkdir -p "$HOME"
 export CLAUDE_CONFIG_DIR="$work/config"
 export STUB_SOURCES="$work/sources"
 export STUB_DEFAULT="$repo/claude-plugin"
@@ -291,6 +293,113 @@ cp -a "$repo/claude-plugin" "$STUB_SOURCES/$NEWER"
 out=$(STUB_STALE=1 bash "$setup" bump "$NEWER" "$c" 2>&1); status=$?
 check "a stale per-path record is reported and the types are not retaken" \
   '[ $status -eq 0 ] && grep -q "after update, the pin is ${NEWER:0:12}" <<<"$out" && [ "$lock_before" = "$(cat "$c/.spoolway/plugin.lock")" ]' "$out"
+
+# --- 7. memex: the machine's config and index timer -----------------------------------------
+# `memex` and `systemctl` are stubs and HOME is a throwaway one: nothing here touches the real
+# index, the real config or the real user manager.
+
+export MEMEX_LOG="$work/memex.log"
+cat > "$work/bin/memex" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  *--version*) echo "memex 0.0.0-stub" ;;
+  "index stats"*) printf 'index: x\ndocuments: 80000\nvectors: %s (dims 768, model gemma)\n' "${MEMEX_VECTORS:-14775}" ;;
+  "daemon enable"*)
+    echo "$*" >> "$MEMEX_LOG"
+    [ -f "$HOME/.config/systemd/user/memex-index.timer.d/boot-only.conf" ] && echo "boot-only drop-in was on disk" >> "$MEMEX_LOG"
+    u=$HOME/.config/systemd/user; cfg=$HOME/.memex/config.toml
+    mkdir -p "$u" "$HOME/.memex"
+    printf '[Service]\nExecStart=/x/memex index\n' > "$u/memex-index.service"
+    printf '[Timer]\nOnBootSec=5min\nOnUnitActiveSec=3600s\n' > "$u/memex-index.timer"
+    grep -qs '^auto_index_on_search' "$cfg" || { printf '# Background indexing handles freshness.\nauto_index_on_search = false\n\n'; cat "$cfg" 2> /dev/null || true; } > "$cfg.tmp"
+    [ -f "$cfg.tmp" ] && mv "$cfg.tmp" "$cfg"
+    printf 'index_service_mode = "interval"\nindex_service_interval = 3600\n' >> "$cfg" ;;
+  *) echo "fake memex: unexpected $*" >&2; exit 2 ;;
+esac
+STUB
+cat > "$work/bin/systemctl" <<'STUB'
+#!/usr/bin/env bash
+echo "systemctl $*" >> "$MEMEX_LOG"
+if [ "$*" = "--user show-environment" ] && [ -n "${STUB_FASTEMBED:-}" ]; then echo "FASTEMBED_CACHE_DIR=$STUB_FASTEMBED"; fi
+exit 0
+STUB
+chmod +x "$work/bin/memex" "$work/bin/systemctl"
+hsnap() { (cd "$1" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum); }
+mhome() { local h=$work/home-$1; rm -rf "$h"; mkdir -p "$h/.memex/index"; printf '%s\n' "$h"; }
+msetup() { HOME=$1 bash "$setup" memex "$2" "$3" 2>&1; }
+mcfgval() { grep -E "^$2 *=" "$1/.memex/config.toml" | tail -n 1 | cut -d= -f2- | tr -d ' "'; }
+
+printf 'memex_schedule=boot\nmemex_auto_index_on_search=false\n' > "$work/memex-boot.answers"
+export STUB_FASTEMBED=/cache
+h=$(mhome boot)
+before=$(hsnap "$h"); : > "$MEMEX_LOG"
+out=$(msetup "$h" plan "$work/memex-boot.answers"); status=$?
+check "memex plan writes nothing and starts nothing" '[ $status -eq 0 ] && [ "$before" = "$(hsnap "$h")" ] && ! grep -q "daemon enable" "$MEMEX_LOG"' "$out"
+check "memex plan names the config keys, both drop-ins and the daemon call" \
+  'grep -q "would: added embeddings = \"local\" to $h/.memex/config.toml" <<<"$out" && grep -q "would: added auto_index_on_search = false" <<<"$out" && grep -q "would: wrote $h/.config/systemd/user/memex-index.service.d/limits.conf" <<<"$out" && grep -q "would: wrote $h/.config/systemd/user/memex-index.timer.d/boot-only.conf" <<<"$out" && grep -q "would: ran memex daemon enable" <<<"$out"' "$out"
+
+: > "$MEMEX_LOG"
+out=$(msetup "$h" apply "$work/memex-boot.answers"); status=$?
+check "memex apply: embeddings on, auto-index off, timer installed once" \
+  '[ $status -eq 0 ] && [ "$(mcfgval "$h" embeddings)" = local ] && [ "$(mcfgval "$h" auto_index_on_search)" = false ] && [ "$(grep -c "^daemon enable --interval 3600" "$MEMEX_LOG")" = 1 ]' "$out"
+check "memex apply: the 3-minute drop-in resets the hourly lines, the limits drop-in is written" \
+  'grep -qx "OnStartupSec=3min" "$h/.config/systemd/user/memex-index.timer.d/boot-only.conf" && grep -qx "OnUnitActiveSec=" "$h/.config/systemd/user/memex-index.timer.d/boot-only.conf" && grep -qx "MemoryHigh=2500M" "$h/.config/systemd/user/memex-index.service.d/limits.conf"' "$out"
+check "memex apply: the drop-in is on disk before the daemon call, which loads it with its one restart" \
+  'grep -qx "boot-only drop-in was on disk" "$MEMEX_LOG"' "$(cat "$MEMEX_LOG")"
+check "memex apply: nothing leaks into a consumer's companion.env or the checkout" '! grep -q "memex" <<<"$(cat "$work/mono/.spoolway/companion.env" 2>/dev/null)"'
+out=$(HOME=$h bash "$setup" detect "$work/mono" 2>&1)
+check "detect reads the memex facts back" \
+  'grep -qx "memex schedule	boot" <<<"$out" && grep -qx "memex embeddings	local" <<<"$out" && grep -qx "memex auto_index_on_search	false" <<<"$out" && grep -qx "memex limits drop-in	present" <<<"$out" && grep -qx "memex vectors	14775" <<<"$out"' "$out"
+
+before=$(hsnap "$h"); : > "$MEMEX_LOG"
+out=$(msetup "$h" apply "$work/memex-boot.answers"); status=$?
+check "a second memex apply changes nothing and does not call the daemon again" \
+  '[ $status -eq 0 ] && [ "$before" = "$(hsnap "$h")" ] && ! grep -q "daemon enable" "$MEMEX_LOG" && grep -qx "nothing to add" <<<"$out"' "$out"
+
+printf 'memex_schedule=hourly\nmemex_auto_index_on_search=true\n' > "$work/memex-hourly.answers"
+h=$(mhome hourly); : > "$MEMEX_LOG"
+out=$(msetup "$h" apply "$work/memex-hourly.answers"); status=$?
+check "hourly: no 3-minute drop-in, the limits drop-in, and auto-index true survives the daemon call" \
+  '[ $status -eq 0 ] && [ ! -e "$h/.config/systemd/user/memex-index.timer.d/boot-only.conf" ] && [ -f "$h/.config/systemd/user/memex-index.service.d/limits.conf" ] && [ "$(mcfgval "$h" auto_index_on_search)" = true ] && [ "$(HOME=$h bash "$setup" detect "$work/mono" | grep "^memex schedule")" = "memex schedule	hourly" ]' "$out"
+out=$(msetup "$h" apply "$work/memex-boot.answers")
+check "a different answer than the timer on disk is reported and the timer is kept" \
+  'grep -q "kept the memex-index timer as it is (hourly), the answer was boot" <<<"$out" && [ "$(mcfgval "$h" auto_index_on_search)" = true ] && grep -q "kept $h/.memex/config.toml auto_index_on_search: it is \"true\", the answer was \"false\"" <<<"$out"' "$out"
+
+h=$(mhome low); : > "$MEMEX_LOG"
+out=$(MEMEX_VECTORS=128 msetup "$h" apply "$work/memex-boot.answers"); status=$?
+check "an index with almost no vectors gets no timer: the backfill is to do by hand first" \
+  '[ $status -eq 0 ] && grep -q "to do: the index holds 128 vectors" <<<"$out" && [ ! -e "$h/.config/systemd/user/memex-index.timer" ] && ! grep -q "daemon enable" "$MEMEX_LOG" && [ "$(mcfgval "$h" embeddings)" = local ]' "$out"
+
+h=$(mhome off); mkdir -p "$h/.memex"; printf 'embeddings = false\n[ui]\ntheme = "dark"\n' > "$h/.memex/config.toml"
+out=$(msetup "$h" apply "$work/memex-boot.answers")
+check "embeddings = false is reported, kept, and the tables below it stay intact" \
+  'grep -q "to do: $h/.memex/config.toml embeddings is \"false\"" <<<"$out" && [ "$(mcfgval "$h" embeddings)" = false ] && grep -qx "theme = \"dark\"" "$h/.memex/config.toml"' "$out"
+
+printf 'memex_schedule=none\nmemex_auto_index_on_search=true\n' > "$work/memex-none.answers"
+printf 'memex_schedule=none\n' > "$work/memex-none2.answers"
+h=$(mhome none); out=$(msetup "$h" apply "$work/memex-none.answers")
+check "no schedule: nothing installed, auto-index set as answered, the manual command named" \
+  '[ ! -e "$h/.config/systemd/user" ] && [ "$(mcfgval "$h" auto_index_on_search)" = true ] && grep -q "no memex schedule: run .memex index embed. by hand" <<<"$out"' "$out"
+msetup "$(mhome keep)" apply "$work/memex-boot.answers" > /dev/null; h=$work/home-keep
+out=$(msetup "$h" apply "$work/memex-none2.answers")
+check "no schedule on a machine that has one: reported and kept, never removed" 'grep -q "kept the memex-index timer (boot)" <<<"$out" && [ -f "$h/.config/systemd/user/memex-index.timer" ]' "$out"
+
+out=$(PATH=/usr/bin:/bin HOME=$(mhome nomemex) bash "$setup" memex apply "$work/memex-boot.answers" 2>&1); status=$?
+check "no memex on PATH: a to do line, no failure" '[ $status -eq 0 ] && grep -q "to do: memex is not on PATH" <<<"$out"' "$out"
+printf 'memex_schedule=daily\n' > "$work/memex-bad.answers"
+out=$(msetup "$(mhome bad)" apply "$work/memex-bad.answers"); status=$?
+check "a schedule that is none, hourly or boot only" '[ $status -ne 0 ] && grep -q "none, hourly or boot" <<<"$out"' "$out"
+
+unset STUB_FASTEMBED
+out=$(msetup "$(mhome nocache)" apply "$work/memex-boot.answers")
+check "a user manager without FASTEMBED_CACHE_DIR is named to do" 'grep -q "to do: FASTEMBED_CACHE_DIR is not in the systemd user environment" <<<"$out"' "$out"
+
+c=$(consumer withmemex)
+printf 'topology=mono\ncompanion_sha=%s\nmemex_schedule=boot\nmemex_auto_index_on_search=false\n' "$REV" > "$work/withmemex.answers"
+out=$(bash "$setup" apply "$work/withmemex.answers" "$c" 2>&1)
+check "the consumer apply ignores the memex keys: none reaches companion.env, none is written for the machine" \
+  '! grep -qi memex "$c/.spoolway/companion.env" 2>/dev/null && [ ! -e "$HOME/.memex/config.toml" ] && [ ! -e "$HOME/.config/systemd" ]' "$out"
 
 # --- the content rule -----------------------------------------------------------------------
 
