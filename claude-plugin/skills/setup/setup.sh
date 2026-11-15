@@ -379,7 +379,7 @@ projects_doc() {
   printf '\n## The `repos` rule\n\n'
   if [ "$topology" = multi ]; then
     printf '%s\n' "${rule:-A task names in \`repos\` every repository its change touches, this one first.}"
-    printf '\nExtra repositories have their worktrees under `%s`.\n' "${root:-<worktree root>}"
+    printf '\nExtra repositories have their checkouts beside this one, `../<name>`, and their worktrees at `%s/<name>/<branch>`, a `/` in the branch written `-` (`EXTRA_REPOS` and `EXTRA_WORKTREE_ROOT` in `.spoolway/companion.env`).\n' "${root:-<worktree root>}"
   else
     printf 'This is a mono-repo: a task names no `repos`, or only this repository.\n'
   fi
@@ -413,6 +413,13 @@ apply() {
 
   # (1) topology
   if [ -e "$consumer/$PROJECTS" ]; then note "kept $PROJECTS: present"; else projects_doc "$topology" | put_text "$PROJECTS"; fi
+  # The extra-* scripts read the extra repositories and their worktree root from companion.env.
+  if [ "$topology" = multi ]; then
+    if [ -n "$(answer extra_repos)" ]; then put_env EXTRA_REPOS "$(answer extra_repos)"
+    else note "to do: topology is multi and extra_repos is empty; set EXTRA_REPOS in $ENV_FILE"; fi
+    if [ -n "$(answer worktree_root)" ]; then put_env EXTRA_WORKTREE_ROOT "$(answer worktree_root)"
+    else note "to do: topology is multi and worktree_root is empty; set EXTRA_WORKTREE_ROOT in $ENV_FILE"; fi
+  fi
   # (2) pipelines
   if [ -n "$(answer pipelines)" ] && [ "$(answer pipelines)" != all ] && [ -z "$old" ]; then
     if [ -e "$consumer/$SUBSET" ]; then note "kept $SUBSET: present"
@@ -435,9 +442,6 @@ apply() {
   for s in $(consumer_scripts); do
     case "$s" in
       scripts/spoolway/checks.sh) checks_script | put_text "$s"; [ -e "$consumer/$s" ] && [ $dry = 0 ] && chmod 755 "$consumer/$s" ;;
-      scripts/spoolway/extra-*.sh)
-        if [ "$topology" = multi ] && [ ! -e "$consumer/$s" ]; then note "to do: write $s by hand: the companion's template serves a mono-repo only"
-        else put_file "$s" "$templates/$s"; fi ;;
       *)
         if [ -f "$templates/$s" ]; then put_file "$s" "$templates/$s"
         elif [ -e "$consumer/$s" ]; then note "kept $s: present"
