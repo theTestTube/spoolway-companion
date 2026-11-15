@@ -25,7 +25,7 @@ The project's vocabulary is in [GLOSSARY.md](GLOSSARY.md).
   - `templates/` holds files a consumer copies once and owns from then on, laid out like the
     consumer with `setup/` for `.spoolway/` and `github/` for `.github/`: the `github.sh`
     issue-tracking hook, the `spoolway-issues.yml` workflow that closes a task's issue when its
-    pull request merges, and the `checks`, `handover` and mono-repo `extra-*` consumer scripts.
+    pull request merges, and the `checks`, `handover` and `extra-*` consumer scripts.
     `/spoolway-companion:setup` copies them; nothing ever updates a copy.
 - `tests/` holds the tests. They are outside `claude-plugin/`, so they are not installed.
 - `.spoolway/`, `scripts/` and `.github/` make this repository a consumer of its own types.
@@ -144,7 +144,7 @@ plugin, its entry, its lock or its gate. Given a new revision, it moves only the
 companion's own entry, installs or updates per project path, retakes the types, adds what is
 missing and prints a diff for every copied template that changed. Its mechanical half is
 `skills/setup/setup.sh` (`detect`, `plan`, `apply`, `labels`, `bump`); the `materializing-*`
-scripts and a multi-repo's `extra-*` scripts have no template yet and are named as to do.
+scripts have no template yet and are named as to do.
 
 **`/spoolway-companion:spoolway-repair <task-id>`**, which only a person can start, diagnoses a doomed spoolway task, salvages what cleanup would destroy, and advances or retreats it with the person. has no description and is hidden from the model, so a session that
 never invokes it carries no trace of it. Its mechanical reads live in
@@ -211,6 +211,8 @@ types, written by the plugin at the revision it pins:
 
 `tests/spoolway-setup.test.sh` runs `setup.sh` against throwaway consumers with a stub `claude`
 in a throwaway `CLAUDE_CONFIG_DIR` and a fake `gh` whose calls it compares byte for byte.
+`tests/spoolway-extra-repos.test.sh` runs the `extra-*` templates in a task worktree of a consumer
+with an extra repository, against bare remotes and a fake `gh`.
 
 Run the tests with `tests/spoolway-types.test.sh` (needs `bash`, `git`, `jq` and `sha256sum`).
 

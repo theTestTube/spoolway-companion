@@ -71,9 +71,11 @@ the first.
 ### Keys a consumer adds for its own scripts
 
 A consumer may add any key its own scripts read, with the same reader: source `lib.sh` and call
-`companion_env MY_KEY`. The companion ignores keys it does not know. Typical ones: the root under
-which extra worktrees are cut ([multi-repo.md](multi-repo.md)), the repository Materializing opens
-tickets in when it is not the run's own. When such a script cannot work without its key, it fails
+`companion_env MY_KEY`. The companion ignores keys it does not know. Typical ones: the repository
+Materializing opens tickets in when it is not the run's own. The `extra-*` templates setup writes
+read two: `EXTRA_REPOS`, the extra repositories, and `EXTRA_WORKTREE_ROOT`, the root their
+worktrees are cut under ([multi-repo.md](multi-repo.md#the-companions-templates)); setup writes
+both for a multi-repo, and with `EXTRA_REPOS` unset those scripts behave as a mono-repo's. When such a script cannot work without its key, it fails
 with a line starting `ENVIRONMENT:` naming the key, rather than guessing a value: that way the task
 blocks with a reason a person can act on.
 
