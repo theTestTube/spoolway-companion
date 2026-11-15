@@ -30,7 +30,8 @@ scripts behind the steps ([extension-points.md](extension-points.md)).
   passes, so nothing unpushed is lost and the task still finishes.
 
 Every one of the three passes at once for a task whose `repos` names no extra repository. That
-check is the consumer's: the companion has no list of repositories to compare against.
+check is the consumer's: the companion's types have no list of repositories to compare against.
+The templates setup writes keep that list in `.spoolway/companion.env` ([below](#the-companions-templates)).
 
 ## What the shipped steps assume
 
@@ -110,9 +111,48 @@ here, so the shop's `main` never builds against a library change that is not mer
 waits on another project's work names it in `requires:`, which `handover.sh` renders as a
 `## Waits on` section of the pull request body.
 
+## The companion's templates
+
+`/spoolway-companion:setup` writes the three scripts from
+`claude-plugin/templates/scripts/spoolway/extra-*.sh`, once; they are the consumer's from then on.
+The same three serve a multi-repo and a mono-repo, and read two keys of `.spoolway/companion.env`,
+which setup writes from the `extra_repos` and `worktree_root` answers of a multi-repo:
+
+```text
+EXTRA_REPOS="acme/shop-lib acme/shop-infra"
+EXTRA_WORKTREE_ROOT=../worktrees
+```
+
+- **The extra repositories.** `EXTRA_REPOS` names them, `owner/name` or `name`, separated by blanks
+  or commas. A `repos` entry names one by either spelling. Any other entry is this repository,
+  under whatever name the task gives it; a second such entry blocks the step with an
+  `ENVIRONMENT:` line, so a typo never skips a pull request.
+- **Where things are.** Each extra repository's checkout is beside the main checkout under its own
+  name, `../shop-lib`. Its worktree for a task is `<EXTRA_WORKTREE_ROOT>/<name>/<branch>`, a `/` in
+  the branch written `-`. A relative root is read from the main checkout, not from the task's
+  worktree, which spoolway cuts elsewhere; a leading `~` or `$HOME` is expanded. A missing key or
+  checkout blocks with an `ENVIRONMENT:` line.
+- **`extra-worktree`** cuts each worktree with `git worktree add` from the task's `base`, or from
+  that repository's default branch when it has no such branch. A worktree already on the branch
+  passes, as on a resume.
+- **`extra-handover`** checks the task's title and body as `handover.sh` does, and refuses
+  uncommitted changes before anything is pushed. For each extra repository whose branch changes
+  something, it squashes to one commit titled with the task's `title:`, pushes with
+  `--force-with-lease` and opens the pull request, naming the task's issue by its full URL and
+  never with a closing keyword. Then it waits for the checks of all of them together, within one
+  `CI_WAIT_SECONDS`: a red check blocks, and so does a pull request with no check at all once the
+  wait is over. A task that changed only extra repositories gets one comment on its issue naming
+  their pull requests, since no merge in this repository reaches it.
+- **`extra-cleanup`** removes each worktree and its local branch. A worktree with uncommitted
+  changes, files under `.scratch/`, the task's home or the collect folder inside it, or commits its
+  origin lacks is left alone, and the step still passes.
+
+A consumer whose layout differs (checkouts elsewhere, a worktree manager, CI that must be green in
+a particular order) edits its copies: that is what they are for.
+
 ## A consumer with one repository
 
-It still owns the three scripts, because the steps are in the pipeline. The companion's own
-`scripts/spoolway/extra-*.sh` are the shape: each passes at once, and blocks only when a task's
-`repos` names more than one repository, so a task meant for another project is not silently built
-in this one.
+It still owns the three scripts, because the steps are in the pipeline. With `EXTRA_REPOS` unset,
+the templates (and the companion's own `scripts/spoolway/extra-*.sh`) are the shape: each passes
+at once, and blocks only when a task's `repos` names more than one repository, so a task meant for
+another project is not silently built in this one.
