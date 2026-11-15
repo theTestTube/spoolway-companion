@@ -7,6 +7,7 @@
 #   setup.sh apply <answers> [<consumer>]    add what is missing, on a branch, uncommitted
 #   setup.sh labels <owner/repo> [--create]  the spoolway:* labels the repository lacks
 #   setup.sh bump <sha> [<consumer>]         move the companion's pin and retake what it ships
+#   setup.sh memex plan|apply <answers>      the machine, not the checkout: memex's config and index timer
 #
 # <consumer> defaults to the current git checkout. <answers> is a file of `key=value` lines read
 # with grep, never sourced (see SKILL.md for the keys). A line whose key is upper case is a
@@ -17,6 +18,10 @@
 # reported and kept), write a path .spoolway/plugin.lock lists but through types.sh write, touch
 # another plugin's entry or lock, commit, push or edit a label. The one value it changes is the
 # `sha` of the companion's own entry, in `bump`.
+#
+# The exception is `memex`: it writes outside the checkout (memex's config and the user's systemd
+# units), under the same rule (add what is missing, report a differing value and keep it), and
+# never from `plan` or `apply`.
 
 set -euo pipefail
 
@@ -43,7 +48,7 @@ installed=$config_dir/plugins/installed_plugins.json
 
 die() { echo "spoolway-setup: $*" >&2; exit 1; }
 usage() {
-  echo "usage: setup.sh detect [<consumer>] | plan|apply <answers> [<consumer>] | labels <owner/repo> [--create] | bump <sha> [<consumer>]" >&2
+  echo "usage: setup.sh detect [<consumer>] | plan|apply <answers> [<consumer>] | labels <owner/repo> [--create] | bump <sha> [<consumer>] | memex plan|apply <answers>" >&2
   exit 64
 }
 say() { printf '%s\n' "$*"; }
@@ -218,6 +223,7 @@ detect() {
   done
   say "issue-tracker.md	$(tracker_doc)"
   if [ -f "$consumer/docs/agents/triage-labels.md" ]; then say "triage-labels.md	present"; else say "triage-labels.md	missing"; fi
+  memex_facts
 }
 
 # all_targets: every consumer path setup may write from a template, plus the scripts with none.
@@ -465,6 +471,182 @@ apply() {
   elif [ $dry = 0 ]; then say "left uncommitted on $(git -C "$consumer" rev-parse --abbrev-ref HEAD); review, commit and open the pull request yourself; restart Claude Code"; fi
 }
 
+# --- memex ------------------------------------------------------------------------------------
+# The one part of setup that is the machine's, not the checkout's: the memory index's config in
+# ~/.memex and the user's systemd units. It follows the same rule as the rest: add what is
+# missing, report a differing value and keep it. Nothing here shows in `git status`.
+
+memex_cfg() { printf '%s\n' "$HOME/.memex/config.toml"; }
+memex_units() { printf '%s\n' "$HOME/.config/systemd/user"; }
+
+# mcfg_value <key>, mcfg_has <key>: a top-level key of memex's config.toml (above its first table).
+mcfg_value() {
+  [ -f "$(memex_cfg)" ] || return 0
+  awk -v key="$1" '
+    /^\[/ { exit }
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      v = $0; sub(/^[^=]*=[[:space:]]*/, "", v); sub(/[[:space:]]*(#.*)?$/, "", v); gsub(/^"|"$/, "", v); print v; exit
+    }' "$(memex_cfg)"
+}
+mcfg_has() {
+  [ -f "$(memex_cfg)" ] && awk -v key="$1" '
+    /^\[/ { exit }
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" { found = 1 } END { exit !found }' "$(memex_cfg)"
+}
+
+# put_mcfg <key> <toml literal> <why>: add the key above the first table when it is missing.
+put_mcfg() {
+  local key=$1 want=$2 why=$3 f old
+  f=$(memex_cfg)
+  if mcfg_has "$key"; then
+    old=$(mcfg_value "$key")
+    if [ "$old" = "${want//\"/}" ]; then note "kept $f $key: present"
+    else note "kept $f $key: it is \"$old\", the answer was \"${want//\"/}\"; change it by hand if you mean it"; fi
+    return
+  fi
+  act "added $key = $want to $f"
+  [ $dry = 1 ] && return
+  mkdir -p "$(dirname "$f")"
+  {
+    printf '# %s\n%s = %s\n' "$why" "$key" "$want"
+    if [ -f "$f" ]; then printf '\n'; cat "$f"; fi
+  } > "$f.new" && mv "$f.new" "$f"
+}
+
+# put_machine_file <path> (content on stdin): write it when missing; keep it, and say so when it
+# differs, when present.
+put_machine_file() {
+  local dst=$1 tmp
+  tmp=$(mktemp); cat > "$tmp"
+  if [ ! -e "$dst" ]; then
+    act "wrote $dst"
+    if [ $dry = 0 ]; then mkdir -p "$(dirname "$dst")"; cp "$tmp" "$dst"; fi
+  elif cmp -s "$tmp" "$dst"; then note "kept $dst: present"
+  else note "kept $dst: present and different from what setup would write"; fi
+  rm -f "$tmp"
+}
+
+# memex_schedule_now: none, boot, hourly or other, from the units on disk.
+memex_schedule_now() {
+  local t
+  t=$(memex_units)/memex-index.timer
+  if [ ! -f "$t" ]; then echo none
+  elif grep -qs '^OnStartupSec=.' "$t.d"/*.conf; then echo boot
+  elif grep -q '^OnUnitActiveSec=' "$t"; then echo hourly
+  else echo other; fi
+}
+
+# memex_vectors: the vector count `memex index stats` reports, or nothing.
+memex_vectors() {
+  [ -d "$HOME/.memex/index" ] || return 0   # `memex index stats` would create an empty index
+  timeout 60 memex index stats --non-interactive --no-update-check < /dev/null 2> /dev/null | sed -n 's/^vectors: \([0-9][0-9]*\).*/\1/p' | head -n 1  || true
+}
+
+memex_mem_available() { awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo 2> /dev/null; }
+
+# memex_fastembed_env: the model cache directory the systemd user manager hands a service.
+memex_fastembed_env() {
+  command -v systemctl > /dev/null || return 0
+  systemctl --user show-environment 2> /dev/null | sed -n 's/^FASTEMBED_CACHE_DIR=//p' | head -n 1 || true
+}
+
+memex_facts() {
+  local v
+  if command -v memex > /dev/null; then say "memex	$(command -v memex) $(timeout 20 memex --version --no-update-check < /dev/null 2> /dev/null | head -n 1)"
+  else say "memex	none"; return; fi
+  if [ -f "$(memex_cfg)" ]; then say "memex config	present"; else say "memex config	missing"; fi
+  v=$(mcfg_value embeddings); say "memex embeddings	${v:-unset}"
+  v=$(mcfg_value auto_index_on_search); say "memex auto_index_on_search	${v:-unset}"
+  v=$(memex_vectors); say "memex vectors	${v:-unknown}"
+  say "memex schedule	$(memex_schedule_now)"
+  if [ -f "$(memex_units)/memex-index.service.d/limits.conf" ]; then say "memex limits drop-in	present"; else say "memex limits drop-in	missing"; fi
+  v=$(memex_fastembed_env); say "memex FASTEMBED_CACHE_DIR	${v:-unset}"
+  say "memex mem available mb	$(memex_mem_available | grep . || echo unknown)"
+}
+
+# memex_install_schedule <hourly|boot>: embeddings on, the timer, its limits.
+memex_install_schedule() {
+  local want=$1 now vectors units
+  units=$(memex_units)
+  if [ "$(uname -s)" != Linux ] || ! command -v systemctl > /dev/null; then
+    note "to do: setup writes systemd units only; run \`memex daemon enable --interval 3600\` by hand on this machine"; return
+  fi
+  now=$(memex_schedule_now)
+  if ! mcfg_has embeddings; then
+    put_mcfg embeddings '"local"' "The timer runs plain \`memex index\`, which embeds only when this is on."
+  else
+    case $(mcfg_value embeddings) in
+      true | local | remote) note "kept $(memex_cfg) embeddings: $(mcfg_value embeddings)" ;;
+      *) note "to do: $(memex_cfg) embeddings is \"$(mcfg_value embeddings)\": the timer would index the text only and the vectors decay; set it to \"local\" by hand" ;;
+    esac
+  fi
+  vectors=$(memex_vectors)
+  if [ -z "$vectors" ] || [ "$vectors" -lt 1000 ]; then
+    note "to do: the index holds ${vectors:-no} vectors. A first embed pass over a whole history takes over an hour and about 4 GB, and the timer's memory limit would throttle it, so the timer was not installed: close heavy programs, run \`memex index embed\` once by hand, then run setup again"
+    return
+  fi
+  # The drop-ins first, so the one restart `daemon enable` does loads them.
+  put_machine_file "$units/memex-index.service.d/limits.conf" <<'EOF'
+# Keep the index pass from competing with the work on this machine. MemoryHigh throttles
+# instead of killing; MemoryMax is the hard backstop.
+[Service]
+Nice=15
+CPUWeight=20
+CPUQuota=400%
+IOWeight=20
+MemoryHigh=2500M
+MemoryMax=4500M
+EOF
+  case "$want:$now" in
+    boot:none)
+      put_machine_file "$units/memex-index.timer.d/boot-only.conf" <<'EOF'
+# One run per user session, when memory is freest; never hourly. The empty assignments reset
+# what `memex daemon enable` generates.
+[Timer]
+OnBootSec=
+OnUnitActiveSec=
+OnStartupSec=3min
+EOF
+      ;;
+    hourly:none | boot:boot | hourly:hourly) ;;
+    *) note "kept the memex-index timer as it is ($now), the answer was $want: delete $units/memex-index.timer.d/boot-only.conf (or write it) by hand, then \`systemctl --user daemon-reload\`" ;;
+  esac
+  if [ "$now" = none ]; then
+    act "ran memex daemon enable --interval 3600: installs the timer and starts it, so one pass runs right away"
+    if [ $dry = 0 ]; then
+      timeout 60 memex daemon enable --interval 3600 --non-interactive --no-update-check < /dev/null \
+        || note "to do: \`memex daemon enable\` failed above; the units and config are as far as it got"
+    fi
+  elif [ $dry = 0 ]; then
+    systemctl --user daemon-reload || true
+  fi
+  if [ -z "$(memex_fastembed_env)" ]; then
+    note "to do: FASTEMBED_CACHE_DIR is not in the systemd user environment: the timer's first model download (1.2 GB) would land in the service's working directory. Set it in ~/.config/environment.d/fastembed.conf and log in again"
+  fi
+}
+
+memex_apply() {
+  local sched auto now
+  sched=$(answer memex_schedule); auto=$(answer memex_auto_index_on_search)
+  case $sched in '' | none | hourly | boot) ;; *) die "memex_schedule \"$sched\" is none, hourly or boot" ;; esac
+  case $auto in '' | true | false) ;; *) die "memex_auto_index_on_search \"$auto\" is true or false" ;; esac
+  if [ -z "$sched" ] && [ -z "$auto" ]; then say "nothing asked of memex"; return; fi
+  if ! command -v memex > /dev/null; then note "to do: memex is not on PATH, so nothing was done for it; install it, then run setup again"; return; fi
+  # auto_index_on_search before the timer: `memex daemon enable` adds it as false only when the key is missing.
+  case $auto in
+    true) put_mcfg auto_index_on_search true "A search first re-scans the history and indexes what is new; nothing else keeps the index fresh." ;;
+    false) put_mcfg auto_index_on_search false "Background indexing handles freshness; avoid duplicate scan work during search." ;;
+  esac
+  case $sched in
+    hourly | boot) memex_install_schedule "$sched" ;;
+    none)
+      now=$(memex_schedule_now)
+      if [ "$now" = none ]; then note "no memex schedule: run \`memex index embed\` by hand when the vectors fall behind"
+      else note "kept the memex-index timer ($now): setup never removes one; \`memex daemon disable\` does"; fi ;;
+  esac
+  if [ $changed = 0 ]; then say "nothing to add"; elif [ $dry = 0 ]; then say "wrote outside the checkout (see the lines above); none of it is in git"; fi
+}
+
 # --- labels -----------------------------------------------------------------------------------
 
 labels() {
@@ -539,5 +721,6 @@ case "${1:-}" in
   apply) [ $# -ge 2 ] && [ $# -le 3 ] || usage; answers=$(cd "$(dirname "$2")" && pwd)/$(basename "$2"); consumer=$(consumer_dir "${3:-}"); apply ;;
   labels) [ $# -ge 2 ] && [ $# -le 3 ] || usage; labels "$2" "${3:-}" ;;
   bump) [ $# -ge 2 ] && [ $# -le 3 ] || usage; consumer=$(consumer_dir "${3:-}"); bump "$2" ;;
+  memex) [ $# -eq 3 ] && { [ "$2" = plan ] || [ "$2" = apply ]; } || usage; answers=$(cd "$(dirname "$3")" && pwd)/$(basename "$3"); [ -f "$answers" ] || die "no answers file $answers"; [ "$2" = plan ] && dry=1; memex_apply ;;
   *) usage ;;
 esac
