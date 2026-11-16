@@ -14,6 +14,10 @@
 # never sourced). Typically the directory a pinned plugin writes into, so nothing is written
 # there by a copy older or newer than the pin. Without it the hook only warns.
 #
+# SPOOLWAY_COMPANION_WIKI_PIN_DRIFT_BLOCK=false (in the environment Claude Code starts in) turns the
+# deny into a warning: writes under the protected path go through, and the user and the agent are
+# told about the drift on each one. Any other value, or none, denies.
+#
 # Drift is recomputed on every call, so the gate lifts as soon as the install matches.
 # The hook never blocks the session: every path exits 0.
 
@@ -49,6 +53,10 @@ protected_dir() {
   printf '%s' "${value%/}"
 }
 protected="$(protected_dir)"
+
+block=true
+[ "${SPOOLWAY_COMPANION_WIKI_PIN_DRIFT_BLOCK:-}" = false ] && block=false
+warn_note="SPOOLWAY_COMPANION_WIKI_PIN_DRIFT_BLOCK=false: writes under ${protected:-the protected path}/ are allowed despite the drift, so what is written now may follow a stale plugin."
 
 # The record that applies to this project: its own local, then project, record;
 # otherwise the most recently updated one (a worktree without its own install
@@ -186,8 +194,11 @@ session_start() {
     message+=$'\nInstalled plugins do not match the commits pinned in .claude/settings.json:\n'"$drift_lines"
     message+=$'Run, then restart Claude Code:\n'"$commands"
     context="Plugin pin drift: the installed plugins do not match the commits pinned in .claude/settings.json."$'\n'"$drift_lines"
-    if [ -n "$protected" ]; then
+    if [ -n "$protected" ] && [ "$block" = true ]; then
       context+="Do not write into $protected/ until they match. Write and Edit under $protected/ are denied; do not use Bash or any other tool to write there either. "
+    elif [ -n "$protected" ]; then
+      message+=$'\n'"$warn_note"
+      context+="$warn_note Mention the drift to the user before writing there. "
     fi
     context+="Ask the user to run the following, then restart Claude Code:"$'\n'"$commands"
   fi
@@ -211,6 +222,13 @@ pre_tool_use() {
 
   evaluate
   [ -n "$drift_lines" ] || return
+
+  if [ "$block" = false ]; then
+    jq -n --arg warning "spoolway-companion pin-drift: $warn_note"$'\n'"${drift_lines}Run, then restart Claude Code:"$'\n'"${commands%$'\n'}" '
+      {systemMessage: $warning,
+       hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $warning}}'
+    return
+  fi
 
   jq -n --arg reason "Writes under $protected/ are blocked until the installed plugins match their pins."$'\n'"${drift_lines}Ask the user to run, then restart Claude Code:"$'\n'"${commands%$'\n'}" '
     {hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}'

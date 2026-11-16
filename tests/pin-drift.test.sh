@@ -189,6 +189,26 @@ denied "env wins: Write under the environment's path is denied"
 out="$(write_input Write "$project/.wiki/a.md" | PATH="$bin:$PATH" PIN_DRIFT_PROTECTED=pages CLAUDE_PROJECT_DIR="$project" CLAUDE_CONFIG_DIR="$config" bash "$hook" pre-tool-use)"; status=$?
 expect_silent "env wins: Write under the file's path passes"
 
+# 9f. SPOOLWAY_COMPANION_WIKI_PIN_DRIFT_BLOCK=false: drift warns under the protected path, never denies.
+setup warn
+installed "\"$OTHER_SHA\"" "\"$KT_SHA\""
+export SPOOLWAY_COMPANION_WIKI_PIN_DRIFT_BLOCK=false
+run session-start
+expect_jq "warn: systemMessage keeps the update command and says writes are allowed" \
+  '.systemMessage | contains("claude plugin update alpha@example-market --scope project") and contains("are allowed despite the drift")'
+expect_jq "warn: additionalContext does not say writes are denied" \
+  '.hookSpecificOutput.additionalContext | (contains("are denied") | not) and contains("are allowed")'
+run pre-tool-use "$(write_input Write "$project/.wiki/concepts/a.md")"
+expect_jq "warn: Write under the protected path is warned, not denied" \
+  '(.hookSpecificOutput.permissionDecision == null) and (.systemMessage | contains("claude plugin update alpha@example-market --scope project"))'
+run pre-tool-use "$(write_input Write "$project/src/app.ts")"; expect_silent "warn: Write outside the protected path stays silent"
+installed "\"$WIKI_SHA\"" "\"$KT_SHA\""
+run pre-tool-use "$(write_input Write "$project/.wiki/concepts/a.md")"; expect_silent "warn: no drift, no warning"
+export SPOOLWAY_COMPANION_WIKI_PIN_DRIFT_BLOCK=true
+installed "\"$OTHER_SHA\"" "\"$KT_SHA\""
+run pre-tool-use "$(write_input Write "$project/.wiki/concepts/a.md")"; denied "block=true: Write under the protected path is denied"
+unset SPOOLWAY_COMPANION_WIKI_PIN_DRIFT_BLOCK
+
 # 10. Never blocks: broken inputs still exit 0.
 setup broken
 printf '{not json' >"$project/.claude/settings.json"

@@ -125,6 +125,9 @@ declared `ref`. If neither source can decide, the hook says so.
   `claude plugin update … --scope project` command, and, when `PIN_DRIFT_PROTECTED` names a path,
   tells the agent not to write there.
 - **PreToolUse** (`Write`, `Edit`): denies writes under `PIN_DRIFT_PROTECTED` while drift persists.
+  `SPOOLWAY_COMPANION_WIKI_PIN_DRIFT_BLOCK=false` in the environment Claude Code starts in (not a
+  `companion.env` key) turns the deny into a warning that names the drift and the commands; any
+  other value, or none, denies.
   It recomputes drift on each call, so the gate lifts once the install matches.
 
 The hook never blocks the session. It cannot report its own missing install, because no hook runs
