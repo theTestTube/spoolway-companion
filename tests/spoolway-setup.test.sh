@@ -6,6 +6,8 @@
 # Usage: tests/spoolway-setup.test.sh (needs bash, git, jq, sha256sum)
 
 set -u
+# The machine's own settings must not win over the companion.env the setup writes.
+unset "${!SPOOLWAY_@}" RUN_REPORT_REPO FINDINGS_REPO MATERIALIZING_REPO PAGES_DIR PAGES_LOG PAGES_COMPILE_PATTERN EXTRA_REPOS EXTRA_WORKTREE_ROOT
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 setup="$repo/claude-plugin/skills/setup/setup.sh"
