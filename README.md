@@ -20,6 +20,8 @@ The project's vocabulary is in [GLOSSARY.md](GLOSSARY.md).
   - `skills/setup/` (`/spoolway-companion:setup`) sets a consumer up for the companion, or moves
     it to a new companion revision.
   - `skills/spoolway-repair/` (`/spoolway-companion:spoolway-repair <task-id>`) repairs a stuck task.
+  - `skills/gh-report/` (`/spoolway-companion:gh-report owner/repo ...`) writes one HTML page of issue
+    line charts (created and open, 2 weeks and 3 months) for a list of repositories, read-only.
   - `hooks/pin-drift` warns when the installed plugin is not the commit the consumer pins.
   - `spoolway/types/` is the one definition of the pipeline types.
   - `templates/` holds files a consumer copies once and owns from then on, laid out like the
