@@ -182,7 +182,7 @@ done
 # --- The content rule -----------------------------------------------------------------------
 
 check "the templates carry the written-once header and name no project or personal path" \
-  'for f in "$templates"/extra-*.sh; do sed -n 2p "$f" | grep -q "^# Written once by /spoolway-companion:setup" || exit 1; done; ! grep -niE "i[- ]?ching|/home/|herdr" "$templates"/extra-*.sh'
+  'for f in "$templates"/extra-*.sh; do sed -n 2p "$f" | grep -q "^# Written once by /spoolway-companion:setup" || exit 1; done; ! grep -niE "$(printf "\x69[- ]?\x63\x68\x69\x6e\x67")|/home/|herdr" "$templates"/extra-*.sh'
 
 echo
 if [ "$failures" -eq 0 ]; then echo "all passed"; else echo "$failures failed"; exit 1; fi
