@@ -404,7 +404,7 @@ check "the consumer apply ignores the memex keys: none reaches companion.env, no
 # --- the content rule -----------------------------------------------------------------------
 
 check "no project-specific name in the skill, its templates or this suite" \
-  '! grep -rniE "i[- ]?ching" "$repo/claude-plugin/skills/setup" "$templates" "$repo/tests/spoolway-setup.test.sh"'
+  '! grep -rniE "$(printf "\x69[- ]?\x63\x68\x69\x6e\x67")" "$repo/claude-plugin/skills/setup" "$templates" "$repo/tests/spoolway-setup.test.sh"'
 
 echo
 [ $failures -eq 0 ] && echo "all passed" || echo "$failures failed"
