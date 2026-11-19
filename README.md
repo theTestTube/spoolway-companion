@@ -17,8 +17,9 @@ The project's vocabulary is in [GLOSSARY.md](GLOSSARY.md).
 - `claude-plugin/` is the Claude Code plugin **`spoolway-companion`**.
   - `skills/spoolway-types/` (`/spoolway-companion:spoolway-types`) writes the pipeline types into
     a consumer.
-  - `skills/setup/` (`/spoolway-companion:setup`) sets a consumer up for the companion, or moves
-    it to a new companion revision.
+  - `skills/setup/` (`/spoolway-companion:setup`) sets a consumer up for the companion, moves it
+    to a new companion revision, or reviews and drafts the move of spoolway itself to another
+    release.
   - `skills/spoolway-repair/` (`/spoolway-companion:spoolway-repair <task-id>`) repairs a stuck task.
   - `hooks/pin-drift` warns when the installed plugin is not the commit the consumer pins.
   - `spoolway/types/` is the one definition of the pipeline types.
@@ -135,7 +136,7 @@ until the plugin is installed. Run the tests with `tests/pin-drift.test.sh` (nee
 
 ## Skills
 
-**`/spoolway-companion:setup`**, which only a person can start, sets a consumer up. Detection runs
+**`/spoolway-companion:setup [<companion-sha> | spoolway [<version>]]`**, which only a person can start, sets a consumer up. Detection runs
 first and every question the disk answers is skipped; the interview then goes topology, pipelines,
 issue tracking, destinations, wiki, then the `checks` and `handover` commands, and ends with a
 summary the person confirms. It never overwrites a consumer file: in an existing
@@ -145,9 +146,15 @@ through `types.sh write`, and leaves everything uncommitted on a branch. A consu
 another plugin owns is reported, and the companion goes in beside it without touching that
 plugin, its entry, its lock or its gate. Given a new revision, it moves only the `sha` of the
 companion's own entry, installs or updates per project path, retakes the types, adds what is
-missing and prints a diff for every copied template that changed. Its mechanical half is
-`skills/setup/setup.sh` (`detect`, `plan`, `apply`, `labels`, `bump`); a consumer that takes
-Materializing gets its five `materializing-*` scripts from the templates.
+missing and prints a diff for every copied template that changed. Given `spoolway` or a release
+number instead, it changes no file of the checkout: it reads the gap between the installed spoolway and the latest
+release (or the one named, forward or back), probes that release's binary against the checkout
+without installing it, maps the breaking changes onto the checkout's files, and drafts the runs
+the gap needs (Developing, Materializing, Architecting or Feeding-back) under `./.scratch/`. A
+rollback first proposes unqueueing every task and stops unless the person opts in in words. The
+install, the dispatcher, the `sync` and the reload stay the person's. Its mechanical half is
+`skills/setup/setup.sh` (`detect`, `plan`, `apply`, `labels`, `bump`); a consumer that
+takes Materializing gets its five `materializing-*` scripts from the templates.
 
 **`/spoolway-companion:spoolway-repair <task-id>`**, which only a person can start, diagnoses a doomed spoolway task, salvages what cleanup would destroy, and advances or retreats it with the person. has no description and is hidden from the model, so a session that
 never invokes it carries no trace of it. Its mechanical reads live in

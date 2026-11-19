@@ -67,3 +67,18 @@ _Avoid_: target repo, tracker repo, run-report repo
 
 **Intake**:
 The Feeding-back step that reads the open run reports of the report repository.
+
+## Spoolway updates
+
+**As-Is**:
+The spoolway release installed on the machine, read from `spoolway --version`.
+
+**To-Be**:
+The spoolway release an update moves to: the one the person names, else the latest.
+
+**Gap**:
+Everything a consumer holds that the To-Be changes, found by running the To-Be against it.
+
+**Probe**:
+A hash-checked copy of the To-Be binary kept under `./.scratch/`, never installed, that the review
+of a gap runs against the consumer.
