@@ -16,6 +16,7 @@ if ! command -v node > /dev/null; then echo "gh-report: node is not on PATH, ski
 # Stub gh: prints $FIX/<owner>__<repo>.json for `issue list -R <owner>/<repo>`; FAIL=<repo> fails it.
 cat > "$work/gh" <<'STUB'
 #!/usr/bin/env bash
+if [ "$1 $2" = "api user" ]; then [ -n "${NOLOGIN:-}" ] && exit 1; echo "o"; exit 0; fi
 if [ "$1 $2" = "repo view" ]; then
   r="$3"; [ "${FAILVIEW:-}" = "$r" ] && { echo "boom" >&2; exit 1; }
   cat "$FIX/${r/\//__}.view"; exit 0
@@ -50,6 +51,16 @@ check "closed issue stops counting after its close day" "grep -q 'o/a · 09/11: 
 check "days before creation have no dot and a blank cell" "! grep -q 'o/new · 09/11' $work/n.html && grep -q 'o/new · 10/11: 0 open' $work/n.html && grep -q '<tr><td>09/11</td><td>2</td><td></td>' $work/n.html"
 check "days from creation on are drawn at zero" "grep -q 'o/new · 17/11: 0 created' $work/n.html"
 check "no Other series" "! grep -qi 'other' $work/r.html"
+
+out=$(run --owner o a empty 2>&1); st=$?
+check "bare names take --owner" "[ $st -eq 0 ] && grep -qx 'open today o/a: 2' <<<\"\$out\" && grep -qx 'open today o/empty: 0' <<<\"\$out\""
+out=$(run a o/empty 2>&1); st=$?
+check "bare name falls back to the gh login" "[ $st -eq 0 ] && grep -qx 'open today o/a: 2' <<<\"\$out\""
+out=$(GH_REPORT_OWNER=o run a 2>&1); check "bare name takes GH_REPORT_OWNER" "grep -qx 'open today o/a: 2' <<<\"\$out\""
+NOLOGIN=1 run a > /dev/null 2>&1; check "bare name with no owner and no login exits 2" "[ $? -eq 2 ]"
+( cd "$work" && node "$script" --today 2026-11-17 o/a > /dev/null 2>&1 ); check "default output is ./.scratch/gh-report.html" "[ -s $work/.scratch/gh-report.html ]"
+run o/a O/A > /dev/null 2>&1; check "duplicate differing only in case refused" "[ $? -ne 0 ]"
+FAILVIEW=o/empty FAIL=o/a run o/a o/empty 2>&1 | grep -q 'repo view failed'; check "a missing repository fails before any issue is read" "[ ${PIPESTATUS[0]} -ne 0 ]"
 
 FAILVIEW=o/a run o/a > /dev/null 2>&1; check "repo view failure exits non-zero" "[ $? -ne 0 ]"
 FAIL=o/a run o/a > /dev/null 2>&1; check "gh failure exits non-zero" "[ $? -ne 0 ]"
