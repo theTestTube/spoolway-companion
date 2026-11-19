@@ -1,11 +1,18 @@
 ---
 name: setup
+argument-hint: "[<companion-sha> | spoolway [<version>]]"
 disable-model-invocation: true
 ---
 
 # setup
 
-A person starts this in a consuming repo's checkout to set it up for the companion, or to move it to a new companion revision. It asks, `setup.sh` beside this file finds and writes. Every file lands uncommitted on a branch; the person reviews it, commits and opens the pull request. Never commit, push or open a pull request here.
+A person starts this in a consuming repo's checkout to set it up for the companion, to move it to a new companion revision, or to move spoolway itself to another release. The argument picks the road:
+
+- a full commit sha: **A bump**
+- `spoolway`, or a release number (`<version>`, with or without the `v`): **A spoolway update**, to that release, or to the latest when none is named
+- nothing: **A first install**
+
+It asks, `setup.sh` beside this file finds and writes. Every file lands uncommitted on a branch; the person reviews it, commits and opens the pull request. Never commit, push or open a pull request here.
 
 `setup.sh` never overwrites a consumer file: in a file that exists it only adds missing keys or entries, and a differing value is reported and left. The one value it changes is the `sha` of the companion's own entry, on a bump. Do not edit a file by hand to get past what it kept or refused.
 
@@ -40,3 +47,84 @@ When the person names a new companion revision (a full commit sha), run `bash <t
 8. Show `git status --short`, every `to do:` line (the memex ones too: they are not in `git status`), and what to restart.
 
 Done when the person has the branch with the files uncommitted, what was written on the machine named apart, and every `to do:` line in front of them.
+
+## A spoolway update
+
+The checkout runs [spoolway](https://github.com/marvingygas/spoolway) at one release, the **As-Is** (`spoolway --version`). The **To-Be** is the release the person names, or the latest. The **gap** is everything the checkout holds that the To-Be changes. The **probe** is a copy of the To-Be binary in `./.scratch/`, hash-checked and never installed, that every later step runs against the checkout. This road reads, probes and drafts; it writes only under `./.scratch/spoolway-<As-Is>-to-<To-Be>/` (`<dir>` below) and changes no file of the checkout. Check `git check-ignore -q .scratch` first: when it fails, stop and ask the person to ignore `./.scratch/`.
+
+Every spoolway call is `timeout <n> spoolway … < /dev/null`, and `<n>` is as long as the command needs. The reads are `--version`, `whats-new`, `task contract`, `config contract|path|list`, `override list`, `pipeline list|show|check`, `doctor --no-live`, `queue list|show|route`, `lane`, `eval` and `sync --dry-run`. Run `sync` only with `--dry-run`: without a terminal it takes its write without asking. Read the board with `queue list` and `queue route`; `config override`, `config edit`, bare `spoolway queue` and bare `spoolway dispatch` open an editor or a screen, so leave them out.
+
+**The person's word** is a yes, in this session, to the exact command, download or draft you have just shown. A download, an issue, a queue add and every move of a task (`queue pause`, `queue unqueue`, `resume`) each need their own.
+
+**To do** lines are the person's: installing the binary, starting or stopping the dispatcher, taking a `sync`, changing an override, `spoolway dispatch reload`, pushing a branch. Name each as a `to do:` line with the exact command; the person runs it.
+
+What past gaps hit is in [update-gotchas.md](update-gotchas.md): each trap with the command that shows whether it holds on this one. Read it before step 2.
+
+### 1. Review the gap
+
+1. As-Is: `spoolway --version` and `type -a spoolway`. A lane or a script can resolve another copy than the shell does.
+2. To-Be: `<version>` when given, else the latest release (`gh release list --repo marvingygas/spoolway`). Confirm its tag with `gh release view <tag> --repo marvingygas/spoolway`.
+3. Direction: forward when the To-Be is newer, backward when older, and when equal say so in one line and stop.
+4. The releases in the gap: every release after the older end up to the newer one, from `gh release list`. Read each one's notes with `gh release view <tag> --repo marvingygas/spoolway`, and `docs/migrations.md` at the tag, never at the default branch (`gh api -H 'Accept: application/vnd.github.raw' 'repos/marvingygas/spoolway/contents/docs/migrations.md?ref=<tag>'`). Forward, read it at the To-Be tag. Backward, read it at the As-Is tag too: it documents what the release being undone changed. Save what you read under `<dir>`.
+5. Backward: read [update-rollback.md](update-rollback.md) now. Steps 2 and 3 run as written; it replaces steps 4 and 5.
+
+Done when you have stated, one line apiece:
+
+- the As-Is, and every copy of spoolway `type -a` found
+- the To-Be, and whether the person named it or it is the latest
+- the direction
+- each release of the gap by tag and date, each with its breaking-changes section read, and each `docs/migrations.md` section read with the tag it came from
+
+### 2. Probe the To-Be binary
+
+1. Show the person the exact download: the asset for this machine (`uname -sm` against the names `gh release view <tag> --json assets` lists), `SHA256SUMS`, and `<dir>/bin/` as the destination. Download on the person's word. When the session refuses it, hand the person the command to run themselves and carry on from the files.
+2. Run `sha256sum -c --ignore-missing SHA256SUMS`, `chmod +x` the binary, link it as `<dir>/bin/spoolway`, and check that `<dir>/bin/spoolway --version` prints the To-Be. A mismatch stops the run: show it and use nothing from the download.
+3. Run the To-Be's `whats-new --since <As-Is>` (forward) or the As-Is's `whats-new --since <To-Be>` (backward), and name every release it lists that step 1 did not, or the reverse.
+4. For both binaries, from the checkout, run `sync --dry-run`, `pipeline check` and `doctor --no-live`. The probe runs with `<dir>/bin` first on the `PATH`. Save each output under `<dir>/as-is/` and `<dir>/to-be/`.
+5. Find the checkout's own gates and tests from its checks script and its CI workflow, and run each under both binaries, with the checkout's machine-exported variables unset (`update-gotchas.md`, "Probing"). Save each log beside the others.
+6. Class every difference between the two result sets: **new** (the To-Be fails where the As-Is passes), **pre-existing** (both fail alike) or **fixed**.
+
+Done when each command of items 4 and 5 has an output saved under both binaries, or a named reason and the word UNVERIFIED; every difference is classed with a one-line cause; and `type -a spoolway` and `spoolway --version` print what step 1 recorded.
+
+### 3. Map the gap
+
+Match the gap to the checkout's own files: scripts, prompts, pipelines, CI workflows, docs, config keys, every place that pins the As-Is, and the queued task documents. Take the evidence from the probe's output, not from a search of the text: a search only hints at what the binary's check settles. Class each hit as **before** (it breaks under the To-Be and its fix also works under the As-Is, so it can land before any install) or **after** (it needs the To-Be: a sync, a pin, documentation, a reload).
+
+Done when you have shown:
+
+- one row per breaking change of every release in the gap: hit or no hit, with its evidence (the file and line, or the command and its output) and, for a hit, its class
+- every file `sync --dry-run` lists, marked tracked or machine-local (`git check-ignore`), and every config key it adds, marked tracked or machine-only by the checkout's own machine-only gate
+- every task `queue list --json` shows, with its stage and step checked against `pipeline show` of the To-Be
+- every active override (`override list`, in the folder `config path` names), with what each changes
+- the verdict: **GAP** (at least one hit, one new failure or one task that cannot continue) or **no GAP**, with the commands that showed it
+
+With no GAP, go to step 5.
+
+### 4. Propose runs
+
+Read [update-runs.md](update-runs.md). It holds the rule that picks Architecting, Materializing, Developing or Feeding-back, and how a draft is written and checked.
+
+Done when each GAP finding is in one of three places, and the person has the list:
+
+- a draft run: its pipeline, the finding it takes, the reason the rule gave, and its folder `<draft>` (`./.scratch/<issue>-<slug>/`), each passing `spoolway task contract --from <draft>` as `update-runs.md` says
+- a `to do:` line, when the fix is the person's alone
+- a stated reason it stays open
+
+Nothing is queued, opened or posted until the person has given their word to that draft.
+
+### 5. Hand over the person's steps
+
+Give the person, in this order, every `to do:` line the gap needs:
+
+1. install the To-Be binary: the same asset and hash check as the probe, or what `spoolway update --help` says for this install
+2. stop every process still running the As-Is binary and start it again: the dispatcher, and any lane the person keeps
+3. take `spoolway sync` in each place the drafts name, then read `git diff` of the tracked config before committing
+4. `spoolway dispatch reload` once the pull request has merged
+
+Done when every `to do:` line stands in that order, each with the command that shows it took (`spoolway --version`, `sync --dry-run` listing nothing, `pipeline check` and `doctor --no-live` as the probe left them), and the person has the list.
+
+### 6. Verify
+
+When the person says the install is done, run the `--version`, `sync --dry-run`, `pipeline check` and `doctor --no-live` of step 2 again, save them under `<dir>/after/`, and compare them with `<dir>/to-be/`.
+
+Done when each output equals its probe counterpart, or each difference is named with its cause.
