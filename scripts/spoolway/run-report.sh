@@ -17,6 +17,8 @@
 # every one of them, and `file` decides nothing: it opens what `signals` left, or an urgent
 # finding the lane names, the one signal that is a lane's judgment.
 #
+# Only `signals` and `file` need a task: they exit 64 when SPOOLWAY_TASK_FILE names none.
+#
 # Exit codes of `file`: 0 filed, already filed, or nothing to file; 2 the tracker refused.
 # Exit codes of `repo`: 0 printed; 2 the report repository cannot be told (nothing on stdout).
 set -euo pipefail
@@ -29,27 +31,25 @@ REPORT_REPO=
 REPORT_LABEL=run-report
 URGENT_LABEL=P1-high
 
-# `repo` reads no task, so it answers before the task file is required.
-if [ "${1:-}" = repo ]; then
-  run_report_repo || exit 2
-  exit 0
-fi
-
-task_file=${SPOOLWAY_TASK_FILE:-}
-if [ -z "$task_file" ] || [ ! -f "$task_file" ]; then
-  echo "run-report: SPOOLWAY_TASK_FILE names no task file" >&2
-  exit 64
-fi
-task=${SPOOLWAY_TASK:-$(frontmatter_value "$task_file" id)}
-# The project's home holds queue/, scratch/ and the command logs; the task file sits one level in.
-home=$(cd "$(dirname "$task_file")/.." && pwd)
-# A command step is handed no SPOOLWAY_SCRATCH and a lane is, so both subcommands derive the same
-# directory from the task file and neither reads that variable. Every file carries the run id: a
-# later run of the same task id never reads an earlier run's verdict or marker.
-scratch=$home/scratch/$task
-run=$(frontmatter_value "$task_file" run)
-verdict=$scratch/run-report.$run.md
-filed=$scratch/run-report.$run.url
+# need_task: what `signals` and `file` read, and `repo` does not. Sets task_file, task, home,
+# scratch, run, verdict and filed, or exits 64 when SPOOLWAY_TASK_FILE names no task file.
+need_task() {
+  task_file=${SPOOLWAY_TASK_FILE:-}
+  if [ -z "$task_file" ] || [ ! -f "$task_file" ]; then
+    echo "run-report: SPOOLWAY_TASK_FILE names no task file" >&2
+    exit 64
+  fi
+  task=${SPOOLWAY_TASK:-$(frontmatter_value "$task_file" id)}
+  # The project's home holds queue/, scratch/ and the command logs; the task file sits one level in.
+  home=$(cd "$(dirname "$task_file")/.." && pwd)
+  # A command step is handed no SPOOLWAY_SCRATCH and a lane is, so both subcommands derive the same
+  # directory from the task file and neither reads that variable. Every file carries the run id: a
+  # later run of the same task id never reads an earlier run's verdict or marker.
+  scratch=$home/scratch/$task
+  run=$(frontmatter_value "$task_file" run)
+  verdict=$scratch/run-report.$run.md
+  filed=$scratch/run-report.$run.url
+}
 
 # frontmatter_map_value <file> <map> <key>: one value of a one-level frontmatter map, as
 # `arrivals:` / `  implement: 2`; nothing when the map or the key is missing.
@@ -91,6 +91,7 @@ at_least() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 >= b + 0) }'; }
 above() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 > b + 0) }'; }
 
 signals() {
+  need_task
   local blocks='' arrivals='' environment='' doctor='' spend_x='' spend_min='' spend_usd=''
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -233,6 +234,7 @@ signals() {
 }
 
 file_report() {
+  need_task
   REPORT_REPO=$(run_report_repo) || exit 2
   local urgent=''
   while [ $# -gt 0 ]; do
@@ -298,5 +300,6 @@ file_report() {
 case "${1:-}" in
   signals) shift; signals "$@" ;;
   file) shift; file_report "$@" ;;
+  repo) run_report_repo || exit 2 ;;
   *) echo "usage: run-report.sh signals <thresholds> | file [--urgent <line>] | repo" >&2; exit 64 ;;
 esac
