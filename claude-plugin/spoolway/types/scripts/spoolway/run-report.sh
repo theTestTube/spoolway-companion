@@ -235,7 +235,6 @@ signals() {
 
 file_report() {
   need_task
-  REPORT_REPO=$(run_report_repo) || exit 2
   local urgent=''
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -257,6 +256,13 @@ file_report() {
     echo "run-report: already filed for run $run: $(cat "$filed")"
     exit 0
   fi
+
+  # The tracker is needed from here on. A refused resolution must not lose an urgent finding.
+  if ! REPORT_REPO=$(run_report_repo); then
+    [ -n "$urgent" ] && echo "run-report: urgent finding not filed: $urgent" >&2
+    exit 2
+  fi
+
   local existing
   if ! existing=$(gh issue list --repo "$REPORT_REPO" --label "$REPORT_LABEL" --state all --search "\"$run\" in:body" --json url --jq '.[0].url // empty' 2>&1); then
     echo "REFUSED: could not read $REPORT_REPO to check for an earlier report: $existing" >&2
