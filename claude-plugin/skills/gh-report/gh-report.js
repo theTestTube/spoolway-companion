@@ -4,11 +4,14 @@
 // last 2 weeks and last 3 months), one series per repository, a legend, hover tooltips and a
 // data table under each chart. Read-only: it never writes to GitHub.
 //
-// Usage: node gh-report.js [--out FILE] [--limit N] [--today YYYY-MM-DD] owner/repo [owner/repo ...]
+// Usage: node gh-report.js [--out FILE] [--owner OWNER] [--limit N] [--today YYYY-MM-DD] repo|owner/repo [...]
+// A bare `repo` takes --owner, else $GH_REPORT_OWNER, else the login `gh` is authenticated as.
+// --out defaults to ./.scratch/gh-report.html (the directory is created).
 // Exit codes: 0 written; 1 a gh call failed, the limit was reached or the input is invalid; 2 usage.
 // Environment: GH_REPORT_GH names the gh executable (default `gh`), for tests.
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const { spawnSync } = require('child_process');
 
 // Categorical slots 1-8 of the dataviz reference palette, in fixed order, light and dark.
@@ -20,25 +23,34 @@ const DARK = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#0ca30c', 
 function die(msg, code = 1) { process.stderr.write(`gh-report: ${msg}\n`); process.exit(code); }
 
 const args = process.argv.slice(2);
-let out = 'gh-report.html', limit = 5000, todayArg = null;
-const repos = [];
+let out = path.join('.scratch', 'gh-report.html'), limit = 5000, todayArg = null, owner = process.env.GH_REPORT_OWNER || null;
+const given = [];
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === '--out') out = args[++i];
+  else if (a === '--owner') owner = args[++i];
   else if (a === '--limit') limit = Number(args[++i]);
   else if (a === '--today') todayArg = args[++i];
   else if (a.startsWith('-')) die(`unknown flag ${a}`, 2);
-  else repos.push(a);
+  else given.push(a);
 }
 if (!out) die('--out needs a file', 2);
+if (owner !== null && !/^[\w.-]+$/.test(owner)) die('--owner needs a GitHub login', 2);
 if (!Number.isInteger(limit) || limit < 1) die('--limit needs a positive integer', 2);
-if (repos.length === 0) die('usage: gh-report.js [--out FILE] [--limit N] owner/repo [owner/repo ...]', 2);
-for (const r of repos) if (!/^[\w.-]+\/[\w.-]+$/.test(r)) die(`not an owner/repo: ${r}`, 2);
-if (new Set(repos).size !== repos.length) die('a repository is listed twice', 2);
-if (repos.length > LIGHT.length) die(`${repos.length} repositories: the palette validates ${LIGHT.length} series; split the list`);
+if (given.length === 0) die('usage: gh-report.js [--out FILE] [--owner OWNER] [--limit N] repo|owner/repo [...]', 2);
+for (const r of given) if (!/^[\w.-]+(\/[\w.-]+)?$/.test(r)) die(`not a repo or owner/repo: ${r}`, 2);
 if (todayArg !== null && !/^\d{4}-\d{2}-\d{2}$/.test(todayArg)) die('--today needs YYYY-MM-DD', 2);
 
 const gh = process.env.GH_REPORT_GH || 'gh';
+// A bare repo name needs an owner; ask gh only when one is actually bare.
+if (given.some(r => !r.includes('/')) && owner === null) {
+  const r = spawnSync(gh, ['api', 'user', '--jq', '.login'], { encoding: 'utf8' });
+  if (r.error || r.status !== 0 || !r.stdout.trim()) die('a repo has no owner: pass --owner, set GH_REPORT_OWNER or run `gh auth login`', 2);
+  owner = r.stdout.trim();
+}
+const repos = given.map(r => (r.includes('/') ? r : `${owner}/${r}`));
+if (new Set(repos.map(r => r.toLowerCase())).size !== repos.length) die('a repository is listed twice', 2);
+if (repos.length > LIGHT.length) die(`${repos.length} repositories: the palette validates ${LIGHT.length} series; split the list`);
 function fetchIssues(repo) {
   const r = spawnSync(gh, ['issue', 'list', '-R', repo, '--state', 'all', '--limit', String(limit),
     '--json', 'number,state,createdAt,closedAt'], { encoding: 'utf8', maxBuffer: 1 << 28 });
@@ -61,7 +73,9 @@ function fetchBorn(repo) {
   return day;
 }
 
-const series = repos.map((repo, i) => ({ repo, idx: i + 1, rows: fetchIssues(repo), born: fetchBorn(repo) }));
+// `gh repo view` runs first for every repo, so a missing one fails before any issue is read.
+const born = repos.map(fetchBorn);
+const series = repos.map((repo, i) => ({ repo, idx: i + 1, rows: fetchIssues(repo), born: born[i] }));
 
 const DAY = 86400000;
 const iso = d => d.toISOString().slice(0, 10);
@@ -212,6 +226,7 @@ th:first-child,td:first-child{text-align:left}
 </body>
 </html>
 `;
+fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, html);
 process.stdout.write(`gh-report: wrote ${out}\n`);
 for (const s of series) {
