@@ -6,9 +6,10 @@ is `claude-plugin/skills/setup/setup.sh` (`detect`, `plan`, `apply`, `labels`, `
 [extension-points.md](extension-points.md), [multi-repo.md](multi-repo.md) and
 [issue-tracking.md](issue-tracking.md).
 
-The setup skill writes the consumer side of every extension point into a repository, and moves an
-installed consumer to a newer pin. One skill does both: there is one entry point whether the
-repository is new to the companion or already on it.
+The setup skill writes the consumer side of every extension point into a repository, moves an
+installed consumer to a newer pin, and reviews the move of spoolway itself to another release. One
+skill does all three: there is one entry point whether the repository is new to the companion,
+already on it, or about to change its spoolway binary.
 
 ## What it detects
 
@@ -82,3 +83,34 @@ which it does not apply ([issue-tracking.md](issue-tracking.md#keeping-the-templ
 
 The pin is always an inline, sha-pinned `spoolway-companion` entry in the consumer's
 `.claude/settings.json`.
+
+## A spoolway update
+
+Started as `/spoolway-companion:setup spoolway` (the latest release) or `/spoolway-companion:setup
+<version>`. It writes nothing outside `./.scratch/`; the checkout's files, the binary, the
+dispatcher and the queue stay as they are until the person acts.
+
+1. **Review the gap.** The installed release (the As-Is) against the target (the To-Be), forward or
+   back, with the notes of every release between them and `docs/migrations.md` read at the tag, never
+   at the default branch. Going back, it is read at the installed tag as well, since only that tag
+   documents what the undone release changed.
+2. **Probe.** On the person's word it downloads the To-Be binary into `./.scratch/`, checks its
+   hash and installs nothing. It runs `sync --dry-run`, `pipeline check`, `doctor --no-live` and the
+   checkout's own gates and tests under both binaries, and separates new failures from pre-existing
+   ones.
+3. **Map.** Each breaking change of the gap is matched to the checkout's files and reported as a
+   hit or no hit with its evidence, classed **before** (the fix also works under the installed
+   binary) or **after** (it needs the new one). Queued tasks, machine-local files `sync` would write
+   and active overrides are accounted for.
+4. **Propose runs.** When the gap is not empty it drafts Developing, Materializing, Architecting or
+   Feeding-back runs from the checkout's own task templates, checks them with `task contract --from`,
+   and queues or opens nothing without the person's word. The rule that picks the run is in
+   `update-runs.md` beside the skill.
+5. **Hand over.** Installing the binary, restarting the dispatcher, taking the `sync` and
+   `dispatch reload` are the person's and are named as `to do:` lines in order.
+
+A rollback is a flight forward: running processes and tracked files already hold what the newer
+binary wrote. The skill lists every task queued or started under the installed release with what
+its unqueue destroys, salvages the work first, proposes the unqueue, and goes no further unless the
+person writes an opt-in that names the target release (`update-rollback.md`). What earlier gaps
+hit, each with the command that shows whether it holds again, is in `update-gotchas.md`.
