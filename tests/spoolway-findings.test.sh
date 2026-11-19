@@ -92,6 +92,22 @@ make_task report
 run run-report.sh file --urgent "the gate is broken"
 check "file --urgent files with P1-high and the line" \
   '[ $rc -eq 0 ] && grep "issue create" "$CALLS" | grep -q -- "--label P1-high" && grep -q "the gate is broken" "$BODY_OUT"' "rc=$rc $(cat "$work/err")"
+
+# An unresolvable repository must not lose an urgent finding, and must not be asked for when
+# there is nothing to file or the run is already filed.
+make_task report
+GH_FAIL=1 run run-report.sh file --urgent "the gate is broken"
+check "file: an urgent finding is printed when the repository cannot be resolved" \
+  '[ $rc -eq 2 ] && grep -qxF "run-report: urgent finding not filed: the gate is broken" "$work/err" && ! grep -q "issue create" "$CALLS"' "rc=$rc $(cat "$work/err")"
+make_task report
+GH_FAIL=1 run run-report.sh file
+check "file: with nothing to file, no repository is resolved and gh is not called" \
+  '[ $rc -eq 0 ] && [ ! -s "$CALLS" ] && grep -q "nothing to file" "$work/out"' "rc=$rc $(cat "$work/err") $(cat "$CALLS")"
+make_task report
+mkdir -p "$scratch"; echo https://github.com/example/project/issues/7 > "$scratch/run-report.r1.url"
+GH_FAIL=1 run run-report.sh file --urgent "again"
+check "file: an already filed run resolves no repository and calls no gh" \
+  '[ $rc -eq 0 ] && [ ! -s "$CALLS" ] && grep -q "already filed" "$work/out"' "rc=$rc $(cat "$work/err") $(cat "$CALLS")"
 run run-report.sh nope
 check "run-report refuses an unknown subcommand" '[ $rc -eq 64 ]'
 make_task checks
