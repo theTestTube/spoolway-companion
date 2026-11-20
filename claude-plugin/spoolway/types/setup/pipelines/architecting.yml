@@ -10,7 +10,7 @@
 # issue without the close-on-merge label (`close_on_merge: false` in the task document), and the
 # worktree is removed at `done`.
 
-version: "1.4"
+version: "1.5"
 
 description: >-
   The owner queues an Architecting task against an idea issue and charts a wayfinder map for it
@@ -18,12 +18,13 @@ description: >-
   none queued.
 
 steps:
-  # Session history, read-only, through memex. It writes candidates and nothing else.
+  # Session history, read-only, through memex. It writes candidates and nothing else, so Haiku
+  # is enough.
   - id: recall
     description: Search session history for what earlier work says about the idea, as candidates only.
     agent: claude
     prompt: architecting-recall
-    model: claude-opus-5-5
+    model: claude-haiku-5-5
     effort: high
     skills: memex-search
     on_pass: chart
@@ -56,12 +57,13 @@ steps:
 
   # Spec mode: `to-spec` on a map whose tickets are closed, synthesized from the map's
   # "Decisions so far" and each closed ticket's resolution comment, never from a conversation. It
-  # cites each closed ticket it rests on and re-decides none. Chart and resolve modes skip this step.
+  # cites each closed ticket it rests on and re-decides none, so Sonnet is enough. Chart and
+  # resolve modes skip this step.
   - id: spec
     description: Publish the spec of a map from its Decisions so far and its closed tickets' resolution comments, citing each ticket.
     agent: claude
     prompt: architecting-spec
-    model: claude-opus-5-5
+    model: claude-sonnet-5-5
     effort: medium
     skills: mattpocock-skills:to-spec
     on_pass: report
@@ -80,7 +82,7 @@ steps:
 
   # The map's overview page: one private claude.ai page, created once and updated in place at the
   # URL the map's Notes name. It follows the tickets and decides nothing, so Sonnet at high effort
-  # is enough, the one step here not on Opus. Resolve mode skips it.
+  # is enough. Resolve mode skips it.
   - id: artifact
     description: Publish the map's private overview page with the Artifact tool, updating the page its Notes name or creating one and writing its link into the Notes.
     agent: claude
