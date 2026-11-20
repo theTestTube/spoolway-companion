@@ -51,8 +51,12 @@ check "resolve mode (skip_steps: [chart, spec, artifact]) runs recall, resolve, 
   '[ "$(mode_steps "chart spec artifact")" = "recall resolve report collect " ]'
 check "spec mode (skip_steps: [recall, chart, resolve]) runs spec, report, artifact, collect" \
   '[ "$(mode_steps "recall chart resolve")" = "spec report artifact collect " ]'
-for s in recall chart resolve spec report; do
+check "recall runs on Haiku" '[ "$(step_value recall model)" = claude-haiku-5-5 ]'
+check "spec runs on Sonnet" '[ "$(step_value spec model)" = claude-sonnet-5-5 ]'
+for s in chart resolve report; do
   check "$s runs on Opus" '[ "$(step_value $s model)" = claude-opus-5-5 ]'
+done
+for s in recall chart resolve spec report; do
   check "$s runs the prompt architecting-$s" '[ "$(step_value $s prompt)" = "architecting-$s" ]'
   check "the prompt architecting-$s exists" '[ -s "$types/prompts/architecting-$s/PROMPT.md" ]'
 done
