@@ -8,7 +8,7 @@ Vocabulary and consent follow `spoolway-repair`: **salvage** is copying what a t
 
 ## R1. List what runs under the As-Is
 
-Every project home under `~/.spoolway/` that has a `project.toml` records its checkout there (`root`). For each, run `spoolway queue list --json -C <checkout>` with the As-Is binary. A home whose checkout is gone is named and left.
+Every project home under `~/.spoolway/` that has a `project.toml` records its checkout there (`root`). `setup.sh queue-snapshot` runs `spoolway queue list --json -C <checkout>` with the As-Is binary for each and prints every task with its state, lane, branch and unpushed commits. A home whose checkout is gone is named `unreadable` and left.
 
 For each task that is queued, started or parked: its id, project, group, stage and step, whether a lane is running it, its worktree and branch, its commits that origin lacks, and what its working tree holds uncommitted.
 
@@ -18,7 +18,7 @@ Done when every project home that has a `project.toml` is listed or named as unr
 
 ## R2. Salvage
 
-For each started task, copy what its unqueue would delete into `<dir>/salvage/<project>/<task>/`: the diff of tracked files, the untracked files, the command logs, the scratch space, and the commits origin lacks as a bundle (`git bundle create <dir>/salvage/<project>/<task>/branch.bundle origin/<base>..task/<id>`). Check each copy by name and size, and the bundle with `git bundle verify`.
+For each started task, `setup.sh salvage <task>` copies what its unqueue would delete into `./.scratch/salvage-<task>/`: the diff of tracked files, the untracked files, the command logs, the scratch space, and the commits origin lacks as a bundle, which it checks with `git bundle verify` (a `bundle` line says `verified`, or `none` when no commit is missing). Check each copy by name and size.
 
 Pushing the branch is the person's: name it as a `to do:` line per branch (commit what the worktree holds, then push), and confirm with `git ls-remote --heads origin task/<id>` that origin holds the tip.
 

@@ -24,7 +24,7 @@ Reached from "A spoolway update". Each line was observed on an earlier gap and n
 
 ## Drafting and queueing
 
-- **A merged pull request can leave its `task/<id>` branch on origin.** A release can refuse a task whose branch origin still holds. Take a fresh id and `git ls-remote --heads origin task/<id>` right before the queue add.
+- **A merged pull request can leave its `task/<id>` branch on origin.** A release can refuse a task whose branch origin still holds. Take a fresh id and `setup.sh fresh-id <id>` right before the queue add.
 - **`requires:` is not enforced.** It reaches the pull request as a note. Queue the dependent task after what it waits on has merged.
 - **A pin bump leaves the plugin installed in a task's worktree behind the pin.** The pin-drift hook then denies writes to the protected path until `claude plugin update` runs and Claude Code restarts. Put both in the task's pause as the person's steps.
 - **A draft's criteria can name a file git ignores.** Run `git check-ignore -v <path>` before a criterion lists it, or the review asks where the file went.

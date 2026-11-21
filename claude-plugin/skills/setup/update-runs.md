@@ -23,7 +23,7 @@ The checkout may lack the pipeline or the task template a run needs (`.spoolway/
 
 1. Template: the one in the checkout's `.spoolway/templates/tasks/` that matches the pipeline. Every key comes from `spoolway task contract`, run with the To-Be binary (`<dir>/bin/spoolway`; `<dir>` is the skill's work folder).
 2. Place: `<draft>`, which is `./.scratch/<issue>-<slug>/`. A run with no issue yet uses `new` for `<issue>`; rename the folder when the issue exists. Open an issue only on the person's word.
-3. Id: no dots, and its branch is absent from origin: `git ls-remote --heads origin task/<id>` prints nothing. Repeat that check immediately before any queue add, since a branch that outlives a merged pull request makes a release refuse the task.
+3. Id: no dots, and its branch is absent from origin: `setup.sh fresh-id <id>` prints `free` (it runs `git ls-remote --heads origin task/<id>`). Repeat that check immediately before any queue add, since a branch that outlives a merged pull request makes a release refuse the task.
 4. Check: `timeout 60 <dir>/bin/spoolway task contract --from <draft> < /dev/null`. A **before** task also passes it under the As-Is binary, so it can be queued today.
 5. Non-goals of every draft: installing a binary, a real `sync` by the lane, `spoolway dispatch reload`. A non-goal about a lock file or a baseline names what a legitimate tool writes there (for a companion pin, what `setup.sh bump` writes) as the exception.
 6. An **after** task sets `gate_at` to the step before the person's `sync`, so the person takes the sync in the task's worktree at the pause. A task that moves a plugin pin lists the plugin update in the worktree and the restart as a `to do:` of the same pause.
