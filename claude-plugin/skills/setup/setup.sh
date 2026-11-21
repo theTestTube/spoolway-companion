@@ -8,6 +8,13 @@
 #   setup.sh labels <owner/repo> [--create]  the spoolway:* labels the repository lacks
 #   setup.sh bump <sha> [<consumer>]         move the companion's pin and retake what it ships
 #   setup.sh memex plan|apply <answers>      the machine, not the checkout: memex's config and index timer
+#   setup.sh spoolway-version [<version>]    the spoolway update road: As-Is, copies, To-Be, direction
+#   setup.sh gap <to>                        releases in between, their notes and migrations, under ./.scratch/
+#   setup.sh probe <version>                 download and hash-check the To-Be binary; installs nothing
+#   setup.sh probe-run [<dir>]               sync --dry-run, pipeline check, doctor --no-live under both
+#   setup.sh queue-snapshot                  every project home's tasks, lanes, branches, unpushed commits
+#   setup.sh salvage <task>                  a task's diff, untracked files, logs and a verified bundle
+#   setup.sh fresh-id <id>...                whether task/<id> is absent from origin
 #
 # <consumer> defaults to the current git checkout. <answers> is a file of `key=value` lines read
 # with grep, never sourced (see SKILL.md for the keys). A line whose key is upper case is a
@@ -48,7 +55,7 @@ installed=$config_dir/plugins/installed_plugins.json
 
 die() { echo "spoolway-setup: $*" >&2; exit 1; }
 usage() {
-  echo "usage: setup.sh detect [<consumer>] | plan|apply <answers> [<consumer>] | labels <owner/repo> [--create] | bump <sha> [<consumer>] | memex plan|apply <answers>" >&2
+  echo "usage: setup.sh detect [<consumer>] | plan|apply <answers> [<consumer>] | labels <owner/repo> [--create] | bump <sha> [<consumer>] | memex plan|apply <answers> | spoolway-version [<version>] | gap <to> | probe <version> | probe-run [<dir>] | queue-snapshot | salvage <task> | fresh-id <id>..." >&2
   exit 64
 }
 say() { printf '%s\n' "$*"; }
@@ -715,6 +722,242 @@ bump() {
   say "left uncommitted on $(git -C "$consumer" rev-parse --abbrev-ref HEAD); restart Claude Code to load ${new:0:12}"
 }
 
+# --- the spoolway update road ------------------------------------------------------------------
+# Reads, probes and drafts: writes only under ./.scratch/ of the checkout it runs in, installs
+# nothing, and never runs a real `sync`.
+
+SPOOLWAY_REPO=marvingygas/spoolway
+UPDATE_CMDS="sync --dry-run|pipeline check|doctor --no-live"
+
+# sp_version <binary>: the number `--version` prints, without a leading v.
+sp_version() { local v; v=$(timeout 30 "$1" --version < /dev/null 2> /dev/null | head -n 1 | awk '{print $NF}') || true; printf '%s\n' "${v#v}"; }
+# vgt <a> <b>: a is a newer version than b.
+vgt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]; }
+direction() { if [ "$1" = "$2" ]; then echo equal; elif vgt "$2" "$1"; then echo forward; else echo backward; fi; }
+# spw <timeout> <args>…: a spoolway read, never waiting on a terminal.
+spw() { local t=$1; shift; timeout "$t" spoolway "$@" < /dev/null; }
+
+# scratch_root: the checkout's ./.scratch/, which git must ignore.
+# Sets $scratch; call it directly, never in a command substitution, so its die ends the run.
+scratch_root() {
+  git -C "$consumer" check-ignore -q .scratch/x || die "./.scratch/ is not git-ignored in $consumer; ask the person to ignore it first"
+  mkdir -p "$consumer/.scratch"
+  scratch=$consumer/.scratch
+}
+# update_dir <as-is> <to-be>
+update_dir() { scratch_root; mkdir -p "$scratch/spoolway-$1-to-$2"; }
+as_is() { local v; v=$(sp_version spoolway); [ -n "$v" ] || die "spoolway --version prints nothing"; printf '%s\n' "$v"; }
+
+# spoolway-version [<version>]: As-Is, every copy on the PATH, To-Be and the direction.
+spoolway_version() {
+  local want=${1:-} asis tobe kind=latest tag p v
+  asis=$(as_is)
+  say "as-is	$asis"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    say "copy	$p	$(sp_version "$p")"
+  done < <(type -a spoolway 2> /dev/null | awk '{print $NF}' | awk '!seen[$0]++')
+  if [ -n "$want" ]; then
+    want=${want#v}; kind=named
+    tag=$(gh release view "v$want" --repo "$SPOOLWAY_REPO" --json tagName | jq -r .tagName) || die "no release v$want in $SPOOLWAY_REPO"
+  else
+    tag=$(gh release view --repo "$SPOOLWAY_REPO" --json tagName | jq -r .tagName) || die "cannot read the latest release of $SPOOLWAY_REPO"
+  fi
+  tobe=${tag#v}
+  say "to-be	$tobe	$kind	tag $tag"
+  say "direction	$(direction "$asis" "$tobe")"
+}
+
+# gap <to>: the releases in between, their notes, docs/migrations.md at the tag.
+gap() {
+  local tobe=${1#v} asis dir dirn list tag date v lo hi n=0 body
+  asis=$(as_is)
+  dirn=$(direction "$asis" "$tobe")
+  say "as-is	$asis"; say "to-be	$tobe"; say "direction	$dirn"
+  [ "$dirn" != equal ] || { say "equal: nothing to review"; return; }
+  update_dir "$asis" "$tobe"; dir=$scratch/spoolway-$asis-to-$tobe
+  if [ "$dirn" = forward ]; then lo=$asis hi=$tobe; else lo=$tobe hi=$asis; fi
+  list=$(gh release list --repo "$SPOOLWAY_REPO" --limit 200 --json tagName,publishedAt | jq -r '.[] | [.tagName, .publishedAt] | @tsv') || die "cannot list the releases of $SPOOLWAY_REPO"
+  mkdir -p "$dir/notes" "$dir/migrations"
+  while IFS=$'\t' read -r tag date; do
+    [ -n "$tag" ] || continue
+    v=${tag#v}
+    vgt "$v" "$lo" && ! vgt "$v" "$hi" || continue
+    n=$((n + 1))
+    body=$(gh release view "$tag" --repo "$SPOOLWAY_REPO" --json body | jq -r .body) || die "cannot read the notes of $tag"
+    printf '%s\n' "$body" > "$dir/notes/$tag.md"
+    if grep -qiE '^#+ .*breaking' "$dir/notes/$tag.md"; then
+      say "release	$tag	${date%%T*}	notes $dir/notes/$tag.md	breaking-changes section: present"
+    else
+      say "release	$tag	${date%%T*}	notes $dir/notes/$tag.md	breaking-changes section: none"
+    fi
+  done < <(printf '%s\n' "$list" | sort -t$'\t' -k1,1V)
+  [ $n -gt 0 ] || say "no release between $lo and $hi"
+  gap_migrations "$dir" "v$tobe"
+  [ "$dirn" = backward ] && gap_migrations "$dir" "v$asis"
+  say "saved under $dir"
+  return 0
+}
+gap_migrations() {
+  local dir=$1 tag=$2
+  if gh api -H 'Accept: application/vnd.github.raw' "repos/$SPOOLWAY_REPO/contents/docs/migrations.md?ref=$tag" > "$dir/migrations/$tag.md" 2> /dev/null; then
+    say "migrations	$tag	$dir/migrations/$tag.md"
+  else
+    rm -f "$dir/migrations/$tag.md"; say "migrations	$tag	none at that tag"
+  fi
+}
+
+# probe <version>: the platform's asset and SHA256SUMS into <dir>/bin/, hash-checked, never installed.
+probe() {
+  local tobe=${1#v} tag asis dir os arch asset names
+  tag=v$tobe; asis=$(as_is)
+  update_dir "$asis" "$tobe"; dir=$scratch/spoolway-$asis-to-$tobe
+  os=$(uname -s | tr 'A-Z' 'a-z')
+  case $(uname -m) in x86_64 | amd64) arch=x64 ;; aarch64 | arm64) arch=arm64 ;; *) die "no asset for $(uname -m)" ;; esac
+  asset=spoolway-$os-$arch
+  names=$(gh release view "$tag" --repo "$SPOOLWAY_REPO" --json assets | jq -r '.assets[].name') || die "no release $tag"
+  grep -qxF "$asset" <<<"$names" || die "release $tag lists no $asset; it lists: $(tr '\n' ' ' <<<"$names")"
+  grep -qxF SHA256SUMS <<<"$names" || die "release $tag lists no SHA256SUMS"
+  mkdir -p "$dir/bin"
+  rm -f "$dir/bin/spoolway" "$dir/bin/$asset" "$dir/bin/SHA256SUMS"
+  gh release download "$tag" --repo "$SPOOLWAY_REPO" --pattern "$asset" --pattern SHA256SUMS --dir "$dir/bin" --clobber > /dev/null || die "download of $tag failed"
+  say "downloaded	$dir/bin/$asset	$dir/bin/SHA256SUMS"
+  if ! (cd "$dir/bin" && sha256sum -c --ignore-missing SHA256SUMS > "$dir/bin/sha256sum.out" 2>&1); then
+    rm -f "$dir/bin/$asset"
+    say "checksum	MISMATCH	$(tr '\n' ' ' < "$dir/bin/sha256sum.out")"
+    die "the hash of $asset does not match SHA256SUMS: the download was deleted, nothing was made executable or linked"
+  fi
+  say "checksum	ok	$asset"
+  chmod +x "$dir/bin/$asset"
+  ln -sf "$asset" "$dir/bin/spoolway"
+  [ "$(sp_version "$dir/bin/spoolway")" = "$tobe" ] || die "$dir/bin/spoolway --version prints \"$(sp_version "$dir/bin/spoolway")\", not $tobe"
+  say "probe	$dir/bin/spoolway	$tobe	installed nowhere"
+}
+
+# probe_dir [<dir>]: the given probe directory, else the newest holding a bin/spoolway.
+probe_dir() {
+  local d=${1:-}
+  if [ -z "$d" ]; then
+    scratch_root
+    d=$(ls -dt "$scratch"/spoolway-*-to-* 2> /dev/null | while read -r x; do [ -x "$x/bin/spoolway" ] && { echo "$x"; break; }; done)
+    [ -n "$d" ] || die "no probe under ./.scratch/: run probe <version> first"
+  fi
+  [ -x "$d/bin/spoolway" ] || die "$d/bin/spoolway is missing"
+  (cd -P "$d" && pwd)
+}
+
+# probe-run [<dir>]: sync --dry-run, pipeline check and doctor --no-live under both binaries.
+probe_run() {
+  local dir old new side bin cmd slug status unset_args=() k
+  dir=$(probe_dir "${1:-}")
+  old=$(sp_version spoolway); new=$(sp_version "$dir/bin/spoolway")
+  say "as-is	$old	$(command -v spoolway)"; say "to-be	$new	$dir/bin/spoolway"
+  # A key the checkout's companion.env names, or the companion knows, must come from the file.
+  for k in $ENV_KEYS $( { grep -hoE '^[A-Z_][A-Z0-9_]*=' "$consumer/$ENV_FILE" 2> /dev/null || true; } | tr -d '=' ); do unset_args+=(-u "$k"); done
+  mkdir -p "$dir/as-is" "$dir/to-be"
+  for side in as-is to-be; do
+    for cmd in sync-dry-run pipeline-check doctor-no-live; do
+      case $cmd in
+        sync-dry-run) set -- sync --dry-run ;;
+        pipeline-check) set -- pipeline check ;;
+        doctor-no-live) set -- doctor --no-live ;;
+      esac
+      status=0
+      if [ $side = to-be ]; then
+        (cd "$consumer" && PATH="$dir/bin:$PATH" env "${unset_args[@]}" timeout 300 "$dir/bin/spoolway" "$@" < /dev/null > "$dir/$side/$cmd.out" 2>&1) || status=$?
+      else
+        (cd "$consumer" && env "${unset_args[@]}" timeout 300 spoolway "$@" < /dev/null > "$dir/$side/$cmd.out" 2>&1) || status=$?
+      fi
+      echo "$status" > "$dir/$side/$cmd.status"
+    done
+  done
+  for cmd in sync-dry-run pipeline-check doctor-no-live; do
+    old=$(cat "$dir/as-is/$cmd.status"); new=$(cat "$dir/to-be/$cmd.status")
+    if [ "$old" = 0 ] && [ "$new" != 0 ]; then slug=new
+    elif [ "$old" != 0 ] && [ "$new" = 0 ]; then slug=fixed
+    elif [ "$old" != 0 ]; then slug=pre-existing
+    elif cmp -s "$dir/as-is/$cmd.out" "$dir/to-be/$cmd.out"; then slug="same output"
+    else slug="passes under both, output differs"; fi
+    say "$cmd	as-is exit $old	to-be exit $new	$slug	$dir/as-is/$cmd.out $dir/to-be/$cmd.out"
+  done
+  say "saved under $dir; the cause of each difference is yours to read in the outputs"
+}
+
+# project_homes: every spoolway project home on this machine, one path per line.
+project_homes() { local p; for p in "$HOME"/.spoolway/*/project.toml; do [ -f "$p" ] && dirname "$p"; done; return 0; }
+proj_value() { { grep -E "^$2[[:space:]]*=" "$1" || true; } | head -n 1 | cut -d= -f2- | sed -E 's/^[[:space:]]*"?//; s/"?[[:space:]]*$//'; }
+fm_value() { { sed -n '1,/^---$/{/^---$/!p}' "$1" | sed -n '2,$p'; } | { grep -E "^$2:" || true; } | head -n 1 | cut -d: -f2- | sed -E "s/^[[:space:]]*['\"]?//; s/['\"]?[[:space:]]*$//"; }
+
+# queue-snapshot: per project home, each task, its state, lane, branch and unpushed commits.
+queue_snapshot() {
+  local out home root json id state lane doc wt branch base ahead
+  scratch_root; out=$scratch/queue-snapshot.txt
+  : > "$out"
+  while IFS= read -r home; do
+    root=$(proj_value "$home/project.toml" root)
+    {
+      say "project	$home	$root"
+      if ! json=$(spw 60 queue list --json -C "$root" 2> /dev/null) || ! jq -e . > /dev/null 2>&1 <<<"$json"; then
+        say "unreadable	$home	queue list --json failed for $root"; continue
+      fi
+      while IFS=$'\t' read -r id state; do
+        lane=no; [ "$state" = running ] && lane=yes
+        doc=$home/queue/$id.md; branch=; ahead=unknown; wt=
+        if [ -f "$doc" ]; then
+          branch=$(fm_value "$doc" branch); base=$(fm_value "$doc" base); wt=$(fm_value "$doc" worktree_path)
+        fi
+        if [ -n "$branch" ] && [ -n "$wt" ] && [ -d "$wt" ]; then
+          if git -C "$wt" rev-parse -q --verify "refs/remotes/origin/$branch" > /dev/null; then
+            ahead=$(git -C "$wt" rev-list --count "origin/$branch..HEAD" 2> /dev/null || echo unknown)
+          elif git -C "$wt" rev-parse -q --verify "refs/remotes/origin/${base:-main}" > /dev/null; then
+            ahead=$(git -C "$wt" rev-list --count "origin/${base:-main}..HEAD" 2> /dev/null || echo unknown)
+          fi
+        fi
+        say "task	$id	$state	lane $lane	branch ${branch:-none}	unpushed commits $ahead"
+      done < <(jq -r '.tasks[] | [.id, .state] | @tsv' <<<"$json")
+    } >> "$out"
+  done < <(project_homes)
+  cat "$out"
+  say "saved to $out"
+}
+
+# salvage <task>: what a task's worktree holds that origin lacks, kept under ./.scratch/.
+salvage() {
+  local task=$1 home doc wt branch base dir f ahead
+  for home in $(project_homes); do [ -f "$home/queue/$task.md" ] && { doc=$home/queue/$task.md; break; }; done
+  [ -n "${doc:-}" ] || die "no task $task in any spoolway project home's queue"
+  wt=$(fm_value "$doc" worktree_path); branch=$(fm_value "$doc" branch); base=$(fm_value "$doc" base)
+  [ -d "$wt" ] || die "the worktree $wt of $task is gone"
+  scratch_root; dir=$scratch/salvage-$task
+  rm -rf "$dir"; mkdir -p "$dir/logs"
+  cp "$doc" "$dir/task.md"
+  git -C "$wt" diff HEAD > "$dir/diff.patch"
+  say "diff	$dir/diff.patch	$(wc -l < "$dir/diff.patch") lines"
+  git -C "$wt" ls-files --others --exclude-standard -z > "$dir/untracked.list"
+  if [ -s "$dir/untracked.list" ]; then
+    tar -C "$wt" --null -T "$dir/untracked.list" -cf "$dir/untracked.tar"
+    say "untracked	$dir/untracked.tar	$(tr -cd '\0' < "$dir/untracked.list" | wc -c) files"
+  else say "untracked	none"; fi
+  for f in "$home/commands/$task"*.log; do [ -f "$f" ] && cp "$f" "$dir/logs/"; done
+  [ -d "$home/scratch/$task" ] && cp -a "$home/scratch/$task" "$dir/logs/scratch"
+  say "logs	$dir/logs	$(find "$dir/logs" -type f | wc -l) files"
+  if git -C "$wt" rev-parse -q --verify "refs/remotes/origin/$branch" > /dev/null; then ahead="origin/$branch..HEAD"; else ahead="origin/${base:-main}..HEAD"; fi
+  if [ "$(git -C "$wt" rev-list --count "$ahead" 2> /dev/null || echo 0)" -gt 0 ]; then
+    git -C "$wt" bundle create "$dir/$task.bundle" HEAD "^${ahead%..HEAD}" > /dev/null 2>&1 || die "git bundle create failed for $ahead"
+    git -C "$wt" bundle verify "$dir/$task.bundle" > /dev/null 2>&1 || die "git bundle verify refused $dir/$task.bundle"
+    say "bundle	$dir/$task.bundle	verified	$ahead"
+  else say "bundle	none	no commits in $ahead"; fi
+}
+
+# fresh-id <id>…: whether task/<id> is absent from origin.
+fresh_id() {
+  local id out
+  for id in "$@"; do
+    out=$(git -C "$consumer" ls-remote --heads origin "task/$id") || die "git ls-remote origin failed"
+    if [ -z "$out" ]; then say "$id	free	task/$id is absent from origin"; else say "$id	taken	task/$id exists on origin"; fi
+  done
+}
+
 # --- main -------------------------------------------------------------------------------------
 
 command -v jq > /dev/null || die "jq is not installed"
@@ -726,5 +969,12 @@ case "${1:-}" in
   labels) [ $# -ge 2 ] && [ $# -le 3 ] || usage; labels "$2" "${3:-}" ;;
   bump) [ $# -ge 2 ] && [ $# -le 3 ] || usage; consumer=$(consumer_dir "${3:-}"); bump "$2" ;;
   memex) [ $# -eq 3 ] && { [ "$2" = plan ] || [ "$2" = apply ]; } || usage; answers=$(cd "$(dirname "$3")" && pwd)/$(basename "$3"); [ -f "$answers" ] || die "no answers file $answers"; [ "$2" = plan ] && dry=1; memex_apply ;;
+  spoolway-version) [ $# -le 2 ] || usage; consumer=$(consumer_dir); spoolway_version "${2:-}" ;;
+  gap) [ $# -eq 2 ] || usage; consumer=$(consumer_dir); gap "$2" ;;
+  probe) [ $# -eq 2 ] || usage; consumer=$(consumer_dir); probe "$2" ;;
+  probe-run) [ $# -le 2 ] || usage; consumer=$(consumer_dir); probe_run "${2:-}" ;;
+  queue-snapshot) [ $# -eq 1 ] || usage; consumer=$(consumer_dir); queue_snapshot ;;
+  salvage) [ $# -eq 2 ] || usage; consumer=$(consumer_dir); salvage "$2" ;;
+  fresh-id) [ $# -ge 2 ] || usage; consumer=$(consumer_dir); shift; fresh_id "$@" ;;
   *) usage ;;
 esac
