@@ -4,8 +4,9 @@
 # `blocked`, a synthetic scratch space and synthetic command logs. `spoolway` and `gh` are stubs on
 # PATH; every call is logged, so the test can show what the script never touched. The roads
 # (choose, advance, retreat, record) are replayed the same way: the stub answers `--help` from the
-# help text of spoolway 0.6.0 and refuses a real resume or unqueue, and the forced unqueue is
-# simulated by hand, as a probe observed it.
+# help text of spoolway 0.19.0 (captured from the binary's own `--help`, not written by hand) and
+# refuses a real resume or unqueue, and the unqueue is simulated by hand, as the release notes and
+# the issue's probe describe it: worktree and local branch deleted, with no commit first.
 # The assertions are on conclusions and on files, never on wording.
 # Usage: tests/spoolway-repair.test.sh   (needs bash, jq, git)
 
@@ -51,7 +52,7 @@ sed -e "s#@STATE@#$work/home#g" -e "s#@WORKTREE@#$work/wt#g" -e "s#@BASE_COMMIT@
 sed -e "s#^id: $TASK#id: empty-task#" -e "s#^branch: .*#branch: task/empty-task#" "$work/task-$TASK.md" >"$work/task-empty-task.md"
 printf '{"dispatcher_pid": null, "tasks": []}' >"$work/queue-list.json"
 printf 'false' >"$work/unattended"
-cp "$fixture/resume-help.txt" "$fixture/unqueue-help.txt" "$work/"
+cp "$fixture/resume-help.txt" "$fixture/unqueue-help.txt" "$fixture/pause-help.txt" "$work/"
 
 mkdir -p "$work/bin"
 cat >"$work/bin/spoolway" <<EOF
@@ -59,7 +60,7 @@ cat >"$work/bin/spoolway" <<EOF
 # Stub: answers the read-only calls the script may make, and logs every call.
 echo "\$*" >>"$work/spoolway.calls"
 [ "\${1:-}" = -C ] && shift 2
-[ "\${1:-}" = --version ] && { echo "spoolway 0.6.0"; exit 0; }
+[ "\${1:-}" = --version ] && { echo "spoolway 0.19.0"; exit 0; }
 case "\$1 \$2" in
   "task contract") printf '{"output": {"dir": "$work/home/pending"}}' ;;
   "queue show") [ -f "$work/task-\$3.md" ] && cat "$work/task-\$3.md" || { echo "no such task" >&2; exit 1; } ;;
@@ -67,6 +68,7 @@ case "\$1 \$2" in
   "queue list") cat "$work/queue-list.json" ;;
   "config get") cat "$work/unattended" ;;
   "resume --help") cat "$work/resume-help.txt" ;;
+  "queue pause") [ "\${3:-}" = --help ] && cat "$work/pause-help.txt" || { echo "stub: refused: \$*" >&2; exit 64; } ;;
   "queue unqueue") [ "\${3:-}" = --help ] && cat "$work/unqueue-help.txt" || { echo "stub: refused: \$*" >&2; exit 64; } ;;
   *) echo "stub: unexpected call: \$*" >&2; exit 64 ;;
 esac
@@ -341,32 +343,36 @@ printf '{"dispatcher_pid": null, "tasks": []}' >"$work/queue-list.json"
 printf 'written after the salvage\n' >"$work/home/scratch/$TASK/late.txt"
 run retreat "$TASK"; expect "retreat: refuses while the scratch space holds an unsalvaged file" '.refused == ["salvage-incomplete"] and .steps == []'
 rm "$work/home/scratch/$TASK/late.txt"
-grep -v -- '--force' "$fixture/unqueue-help.txt" >"$work/unqueue-help.txt"
-run retreat "$TASK"; expect "retreat: a forced unqueue the binary's help does not offer yields no step" '.refused == ["unqueue-flag-not-in-help"] and .steps == []'
+! grep -q -- '--force' "$fixture/unqueue-help.txt" && pass "fixture: 0.19.0's unqueue help offers no --force" || fail "fixture: 0.19.0's unqueue help offers no --force"
+printf '      --force\n          Interrupt any live agent lane\n' >>"$work/unqueue-help.txt"
+run retreat "$TASK"; expect "retreat: a binary whose unqueue help still offers --force is not the one observed: no step" '.refused == ["unqueue-help-not-0-19"] and .steps == []'
 cp "$fixture/unqueue-help.txt" "$work/unqueue-help.txt"
 
 tip_before=$(git -C "$checkout" rev-parse "refs/heads/task/$TASK")
 run retreat "$TASK"
 [ "$status" = 0 ] && pass "retreat: exits 0 with the dispatcher stopped" || fail "retreat: exits 0 with the dispatcher stopped" "exit=$status $(cat "$err")"
-expect "retreat: comment, forced unqueue, then push, then the check, then the label by hand" \
-  '[.steps[].do] == ["comment","unqueue","push","verify","unlabel"]'
-expect "retreat: the unqueue is spoolway's own, forced" '[.steps[] | select(.do == "unqueue")][0].command == ["spoolway","queue","unqueue","smoke-implement-spec","--force"]'
+expect "retreat: comment, commit of the loose work, push, check, plain unqueue, check, label by hand" \
+  '[.steps[].do] == ["comment","commit","push","check-remote","unqueue","verify","unlabel"]'
+expect "retreat: the unqueue is spoolway's own and plain: no --force" '[.steps[] | select(.do == "unqueue")][0].command == ["spoolway","queue","unqueue","smoke-implement-spec"]'
+expect "retreat: no step is a pause or carries --force" '[.steps[] | select(.command) | .command | map(select(. == "--force" or . == "pause"))] | all(length == 0)'
+expect "retreat: the commit step stages and commits the worktree's loose work, in the project's commit type" \
+  '[.steps[] | select(.do == "commit")][0] | .files == 1 and (.command | join(" ") | contains("add -A") and contains("commit -m")) and (.command[-1] | test("^chore\\(smoke-implement-spec\\): "))'
 expect "retreat: the push names the task's branch" '[.steps[] | select(.do == "push")][0].command[-2:] == ["origin","task/smoke-implement-spec"]'
-expect "retreat: what to expect — the uncommitted file lands in a local commit the unqueue does not push" \
-  '.expect.uncommitted == {files: 1, lands_in: "one local commit", commit: "wip(smoke-implement-spec): blocked", pushed_by_the_unqueue: false} and .expect.worktree.removed'
-expect "retreat: with uncommitted work the local branch is kept, and pushed" '.expect.branch.fate == "kept-with-wip" and .expect.branch.push'
-expect "retreat: the push step warns of the unqueue's commit and that it must be rewritten" \
-  '[.steps[] | select(.do == "push")][0].warning | contains("wip(smoke-implement-spec): blocked") and contains("rewrite") and contains("never rewrites, amends or squashes")'
-grep -qF 'wip(smoke-implement-spec): blocked' "$retreat_draft" && grep -qi 'rewritten to one of the project' "$retreat_draft" \
-  && pass "retreat: the draft names the unqueue's commit and says it must be rewritten" || fail "retreat: the draft names the unqueue's commit and says it must be rewritten"
+expect "retreat: what to expect — the loose file is committed by the retreat, the local branch is deleted by the unqueue" \
+  '.expect.observed_with == "spoolway 0.19.0" and .expect.uncommitted.files == 1 and .expect.uncommitted.committed_by_the_retreat and .expect.worktree.removed and .expect.branch.local == "deleted by the unqueue"'
+! jq -e '.. | strings | select(test("kept-with-wip|wip\\("))' <<<"$out" >/dev/null && pass "retreat: none of 0.6.0's kept-with-wip fates remains" || fail "retreat: none of 0.6.0's kept-with-wip fates remains"
+grep -qF 'chore(smoke-implement-spec): keep the work' "$retreat_draft" && grep -qi 'pushes them before the unqueue' "$retreat_draft" \
+  && pass "retreat: the draft names the retreat's commit and says it precedes the unqueue" || fail "retreat: the draft names the retreat's commit and says it precedes the unqueue"
 expect "retreat: what to expect — scratch is deleted, the command logs stay" \
   '.expect.scratch == {files: 4, deleted: true} and .expect.commands == {files: 3, deleted: false}'
 expect "retreat: what to expect — the label stays, the counts are kept in pending and a re-queue drops them" \
   '.expect.tracker.in_progress_label == "stays" and .expect.document.keeps_arrivals["implement-spec"] == 3 and .expect.document.a_requeue_keeps_them == false and .expect.unverified == []'
 [ -s "$retreat_draft" ] && pass "retreat: what was built and what was left is drafted" || fail "retreat: what was built and what was left is drafted"
-grep -q 'unqueue --help$' "$work/spoolway.calls" && pass "retreat: the unqueue flag is read from the binary's help" || fail "retreat: the unqueue flag is read from the binary's help"
+grep -q 'unqueue --help$' "$work/spoolway.calls" && pass "retreat: the unqueue's help is read from the binary" || fail "retreat: the unqueue's help is read from the binary"
+! grep -q 'queue pause' "$work/spoolway.calls" && pass "retreat: no queue pause is called" || fail "retreat: no queue pause is called"
 [ -z "$(mutating_calls)" ] && pass "retreat: unqueues nothing" || fail "retreat: unqueues nothing" "$(mutating_calls)"
 [ ! -e "$work/gh.calls" ] && pass "retreat: posts nothing (no gh call)" || fail "retreat: posts nothing (no gh call)" "$(cat "$work/gh.calls")"
+retreat_out=$out
 mapfile -t push_command < <(jq -r '.steps[] | select(.do == "push") | .command[]' <<<"$out")
 [ "$(git -C "$checkout" rev-parse "refs/heads/task/$TASK")" = "$tip_before" ] && pass "retreat: the branch's tip is untouched" || fail "retreat: the branch's tip is untouched"
 
@@ -375,25 +381,27 @@ run pushed "$TASK"
 [ "$status" = 1 ] && pass "pushed: exits 1 while the remote lacks a commit" || fail "pushed: exits 1 while the remote lacks a commit" "exit=$status"
 expect "pushed: one commit is not on the remote, and the worktree is not clean" '(.ok | not) and .remote.commits_not_on_remote == 1 and (.worktree.changes | length == 1)'
 
-# The forced unqueue, by hand, as the probe observed it: uncommitted and untracked work in one
-# local commit, the worktree removed, scratch deleted, the document in pending without its run keys.
-git -C "$work/wt" add -A && git -C "$work/wt" commit -q -m "wip($TASK): blocked"
-wip_sha=$(git -C "$checkout" rev-parse --short "refs/heads/task/$TASK"); wip_full=$(git -C "$checkout" rev-parse "refs/heads/task/$TASK")
-git -C "$checkout" worktree remove "$work/wt"
-grep -vE '^(stage|run|branch|base_commit|cut_from|worktree_path|workspace_id|pane_id|tab_id):' "$work/task-$TASK.md" >"$work/home/pending/$TASK.md"
-rm "$work/task-$TASK.md"; rm -rf "$work/home/scratch/$TASK"
-
+# The retreat's first steps, by hand: the loose work is committed (here under the step's own
+# message), pushed, and the check passes while the local branch still exists.
+keep_msg=$(jq -r '[.steps[] | select(.do == "commit")][0].command[-1]' <<<"$retreat_out")
+git -C "$work/wt" add -A && git -C "$work/wt" commit -q -m "$keep_msg"
+keep_full=$(git -C "$checkout" rev-parse "refs/heads/task/$TASK")
 run pushed "$TASK"
-expect "pushed: after the unqueue the remote lacks two commits, the unqueue's own included" '(.ok | not) and .remote.commits_not_on_remote == 2'
-expect "pushed: the branch is read from the salvaged document, and the document is in pending" '.document_source == "salvage" and .pending_document.present and (.worktree.present | not)'
+expect "pushed: after the commit the remote lacks two commits" '(.ok | not) and .remote.commits_not_on_remote == 2'
 "${push_command[@]}" >/dev/null 2>&1
 run pushed "$TASK"
-[ "$status" = 0 ] && pass "pushed: exits 0 after the push the retreat names" || fail "pushed: exits 0 after the push the retreat names" "exit=$status $(cat "$err")"
+[ "$status" = 0 ] && pass "pushed: exits 0 after the push the retreat names, before the unqueue" || fail "pushed: exits 0 after the push the retreat names, before the unqueue" "exit=$status $(cat "$err")"
 expect "pushed: the remote branch holds every commit of the local one" '.ok and .remote.commits_not_on_remote == 0 and .local_branch == "kept"'
-expect "pushed: names the unqueue's commit, the one the replay made" ".wip_commit == \"$wip_sha wip($TASK): blocked\""
-[ "$(git -C "$work/remote.git" rev-parse "refs/heads/task/$TASK")" = "$(git -C "$checkout" rev-parse "refs/heads/task/$TASK")" ] \
-  && git -C "$work/remote.git" log -1 --format=%s "refs/heads/task/$TASK" | grep -q '^wip' \
-  && pass "pushed: the remote's tip is the unqueue's commit of uncommitted work" || fail "pushed: the remote's tip is the unqueue's commit of uncommitted work"
+# The unqueue, by hand, as the release notes describe it: worktree and local branch deleted with no
+# commit first, scratch deleted, the document in pending without its run keys.
+git -C "$checkout" worktree remove "$work/wt"; git -C "$checkout" branch -q -D "task/$TASK"
+grep -vE '^(stage|run|branch|base_commit|cut_from|worktree_path|workspace_id|pane_id|tab_id):' "$work/task-$TASK.md" >"$work/home/pending/$TASK.md"
+rm "$work/task-$TASK.md"; rm -rf "$work/home/scratch/$TASK"
+run pushed "$TASK"
+[ "$status" = 0 ] && pass "pushed: exits 0 after the unqueue, the remote standing past the first diagnosis's tip" || fail "pushed: exits 0 after the unqueue" "exit=$status $out"
+expect "pushed: the branch is read from the salvaged document, and the document is in pending" '.ok and .document_source == "salvage" and .pending_document.present and (.worktree.present | not) and (.local_branch | startswith("deleted"))'
+[ "$(git -C "$work/remote.git" rev-parse "refs/heads/task/$TASK")" = "$keep_full" ] && git -C "$work/remote.git" log -1 --format=%s "refs/heads/task/$TASK" | grep -q '^chore(' \
+  && pass "pushed: the remote's tip is the retreat's own commit of the loose work" || fail "pushed: the remote's tip is the retreat's own commit of the loose work"
 
 # =============================== record ====================================
 : >"$work/spoolway.calls"
@@ -409,11 +417,9 @@ expect "record: a task-document defect and a pipeline defect each go to the find
 all_there=true; while IFS= read -r f; do [ -s "$f" ] && head -1 "$f" | grep -q '^DRAFT' || all_there=false; done < <(jq -r '.drafts[].path' <<<"$out")
 [ "$all_there" = true ] && pass "record: every draft is on disk and says it is a draft" || fail "record: every draft is on disk and says it is a draft"
 expect "record: a retreat drafts no pull request section" '[.drafts[] | select(.kind == "pull-request")] | length == 0'
-expect "record: names the unqueue's commit" ".wip_commit == \"$wip_sha wip($TASK): blocked\""
-grep -qF "$wip_sha wip($TASK): blocked" "$comment" && grep -qi 'rewrite it to one of the project' "$comment" && grep -qF 'never rewrites, amends or squashes' "$comment" \
-  && pass "record: the comment names the unqueue's commit and says it must be rewritten, by hand" || fail "record: the comment names the unqueue's commit and says it must be rewritten, by hand"
-[ "$(git -C "$checkout" rev-parse "refs/heads/task/$TASK")" = "$wip_full" ] && [ "$(git -C "$work/remote.git" rev-parse "refs/heads/task/$TASK")" = "$wip_full" ] \
-  && pass "record: the unqueue's commit is neither rewritten, amended nor squashed, locally or on the remote" || fail "record: the unqueue's commit is neither rewritten, amended nor squashed, locally or on the remote"
+expect "record: names no commit of the unqueue" 'has("wip_commit") | not'
+[ "$(git -C "$work/remote.git" rev-parse "refs/heads/task/$TASK")" = "$keep_full" ] \
+  && pass "record: the remote keeps the retreat's commit untouched" || fail "record: the remote keeps the retreat's commit untouched"
 run record "$TASK" door
 expect "record: the door drafts a pull request section with every open finding" '[.drafts[] | select(.kind == "pull-request")][0].findings == 7'
 [ "$(grep -c '^- \[ \] ' "$pr_draft")" = 7 ] && pass "record: the section on disk is a checklist of seven" || fail "record: the section on disk is a checklist of seven"
@@ -666,26 +672,25 @@ ldraft="$(jq -r '.drafts[0].path' <<<"$out")"
 sections_filled "$ldraft" && pass "lane block: no section of the retreat draft is empty" || fail "lane block: no section of the retreat draft is empty" "$(cat "$ldraft")"
 awk '/^Left:$/ { on = 1; next } on && /^$/ { exit } on' "$ldraft" | grep -qF '`checks`' \
   && pass "lane block: the draft's Left section names checks" || fail "lane block: the draft's Left section names checks"
-expect "lane block: a clean tree the remote lacks keeps the branch, pushed with no warning" \
-  '.expect.branch.fate == "kept" and ([.steps[].do] == ["comment","unqueue","push","verify","unlabel"]) and ([.steps[] | select(.warning)] == []) and (.expect.uncommitted | has("commit") | not)'
+expect "lane block: a clean tree has no commit step, and the push and the check still precede the unqueue" \
+  '([.steps[].do] == ["comment","push","check-remote","unqueue","verify","unlabel"]) and .expect.uncommitted.committed_by_the_retreat == false and .expect.uncommitted.commit == null'
 ! grep -qiE 'wip\(|one more commit|rewritten' "$ldraft" && pass "lane block: a clean tree's draft mentions no commit of the unqueue" || fail "lane block: a clean tree's draft mentions no commit of the unqueue" "$(cat "$ldraft")"
 sections_filled "$retreat_draft" && pass "retreat: the first fixture's draft has no empty section either" || fail "retreat: the first fixture's draft has no empty section either"
 
-# The forced unqueue, by hand: the tree was clean, so no commit is added; the document in pending
+# The unqueue, by hand: the tree was clean, so no commit is added; the document in pending
 # has lost its run keys, and spoolway shows that stripped document.
 git -C "$checkout" worktree remove "$work/wt-lane"
 grep -vE '^(stage|run|branch|base_commit|cut_from|worktree_path|workspace_id|pane_id|tab_id):' "$work/task-$LANE.md" >"$work/home/pending/$LANE.md"
 cp "$work/home/pending/$LANE.md" "$work/task-$LANE.md"
 run record "$LANE" retreat
-[ "$status" = 0 ] && pass "record after a forced unqueue: exits 0" || fail "record after a forced unqueue: exits 0" "exit=$status $(cat "$err")"
-expect "record after a forced unqueue: the first cause and its evidence, from the first diagnosis" \
+[ "$status" = 0 ] && pass "record after an unqueue: exits 0" || fail "record after an unqueue: exits 0" "exit=$status $(cat "$err")"
+expect "record after an unqueue: the first cause and its evidence, from the first diagnosis" \
   '.cause.source == "first-diagnosis" and .cause.kind == "stopped-by-step" and (.cause.evidence | contains("→ `blocked`")) and .document_source == "salvage"'
-expect "record after a forced unqueue: a retreat names no repair commit" '.repair == null'
+expect "record after an unqueue: a retreat names no repair commit" '.repair == null'
 comment="$(jq -r '.drafts[] | select(.kind == "issue-comment") | .path' <<<"$out")"
 grep -qF "$(jq -r '.cause.evidence | ltrimstr("- ")' "$ldest/$first_name")" "$comment" \
-  && pass "record after a forced unqueue: the comment on disk holds the evidence line" || fail "record after a forced unqueue: the comment on disk holds the evidence line"
-expect "record after a forced unqueue: a clean tree has no unqueue commit to name" '.wip_commit == null'
-! grep -qiE 'wip\(|rewrite' "$comment" && pass "record after a forced unqueue: the comment mentions no unqueue commit" || fail "record after a forced unqueue: the comment mentions no unqueue commit"
+  && pass "record after an unqueue: the comment on disk holds the evidence line" || fail "record after an unqueue: the comment on disk holds the evidence line"
+! grep -qiE 'wip\(|rewrite' "$comment" && pass "record after an unqueue: the comment mentions no unqueue commit" || fail "record after an unqueue: the comment mentions no unqueue commit"
 
 # =============================== a retreat the remote already holds =========
 # The shape of probe-10-b: a clean tree, every commit already pushed. The forced
@@ -703,16 +708,16 @@ sed -e "s#@STATE@#$work/home#g" -e "s#@WORKTREE@#$work/wt-held#g" -e "s#@BASE_CO
 run salvage "$HELD"
 run retreat "$HELD"
 [ "$status" = 0 ] && pass "remote holds it: the retreat exits 0" || fail "remote holds it: the retreat exits 0" "exit=$status $(cat "$err")"
-expect "remote holds it: the unqueue deletes the local branch, and there is no push step" \
-  '.expect.branch.fate == "deleted" and (.expect.branch.push | not) and [.steps[].do] == ["comment","unqueue","verify","unlabel"]'
+expect "remote holds it: the unqueue deletes the local branch, and the push is still a step" \
+  '.expect.branch.local == "deleted by the unqueue" and [.steps[].do] == ["comment","push","check-remote","unqueue","verify","unlabel"]'
 ! grep -qiE 'wip\(|one more commit' "$(jq -r '.drafts[0].path' <<<"$out")" && pass "remote holds it: the draft mentions no commit of the unqueue" || fail "remote holds it: the draft mentions no commit of the unqueue"
-# The forced unqueue, by hand, as probe-10-b observed it: worktree removed, local branch deleted.
+# The unqueue, by hand, as probe-10-b observed it: worktree removed, local branch deleted.
 git -C "$checkout" worktree remove "$work/wt-held"; git -C "$checkout" branch -q -D "task/$HELD"
 grep -vE '^(stage|run|branch|base_commit|cut_from|worktree_path|workspace_id|pane_id|tab_id):' "$work/task-$HELD.md" >"$work/home/pending/$HELD.md"
 cp "$work/home/pending/$HELD.md" "$work/task-$HELD.md"
 run pushed "$HELD"
 [ "$status" = 0 ] && pass "remote holds it: pushed exits 0 with no local branch" || fail "remote holds it: pushed exits 0 with no local branch" "exit=$status $out"
-expect "remote holds it: the remote stands at the first diagnosis's tip" '.ok and (.local_branch_exists | not) and (.local_branch | startswith("deleted")) and .wip_commit == null'
+expect "remote holds it: the remote stands at the first diagnosis's tip" '.ok and (.local_branch_exists | not) and (.local_branch | startswith("deleted"))'
 git -C "$work/remote.git" update-ref "refs/heads/task/$HELD" "$base_commit"
 run pushed "$HELD"
 [ "$status" = 1 ] && expect "remote holds it: a remote at another commit is not taken for the branch" '(.ok | not) and .local_branch == "missing"' \

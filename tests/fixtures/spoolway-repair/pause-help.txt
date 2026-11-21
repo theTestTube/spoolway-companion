@@ -1,0 +1,22 @@
+Interrupt any live agent lane the task owns, then park it on `paused` — the same thing `pause` in the board's options menu does for every state but one: a running command step, which the board asks a person about with its own confirm panel.
+
+A running command step is refused rather than acted on, unless `--force` says to kill it — a script has nobody there to answer that panel, so this refuses instead of opening one.
+
+Usage: spoolway queue pause [OPTIONS] <TASK>
+
+Arguments:
+  <TASK>
+          Task id to pause
+
+Options:
+  -C, --repo <DIR>
+          Repo to operate on. Defaults to the current directory's project
+
+      --force
+          Stop a running command step and pause anyway, throwing away its work in progress — the same trade the board's pause panel makes on its `pause now` answer. Without it, a task running one is refused rather than killed on a script's say-so
+
+      --json
+          Machine-readable output, where the command supports it
+
+  -h, --help
+          Print help (see a summary with '-h')

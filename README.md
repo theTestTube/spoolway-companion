@@ -176,8 +176,10 @@ never invokes it carries no trace of it. Its mechanical reads live in
 - `repair.sh advance <task> [<step>] [--confirmed "<words>"]` prints the resume command at that step
   with its status-log message, or why it is refused. A step past a judgment that has not passed is
   the one-way door: no command until salvage is complete and the person's words are passed.
-- `repair.sh retreat <task>` prints the retreat's steps in order (comment, forced unqueue, push,
-  check, label) and what the unqueue will leave; it is refused while a dispatcher runs.
+- `repair.sh retreat <task>` prints the retreat's steps in order (comment, commit of loose work, push, check that the
+  remote holds the tip, plain `queue unqueue`, check, label) and what the unqueue will leave. Under
+  0.19.0 the unqueue deletes the worktree and the local branch with no commit first, hence the order;
+  it is refused while a dispatcher runs.
 - `repair.sh pushed <task>` says whether the remote branch holds every commit of the local one.
 - `repair.sh record <task> <advance|retreat|door>` drafts the bound issue's comment, the pull
   request's repair section and one finding per pipeline or task-document defect. The cause is the
@@ -192,7 +194,7 @@ exits 1 with `ok: false` until the remote holds every commit.
 The script resumes, unqueues, pushes and posts nothing: it prints commands, each checked against the
 binary's `--help` at run time, and the skill runs them on the person's word.
 
-It reads spoolway's formats from the binary and needs `bash`, `jq`, `git` and `spoolway` 0.6.0 or later.
+It reads spoolway's formats from the binary and needs `bash`, `jq`, `git` and `spoolway` 0.19.0.
 `tests/spoolway-repair.test.sh` replays it offline on a fixture of the 2026-10-07 incident task and
 on two synthetic tasks written as the Developing task template writes them
 (`tests/fixtures/spoolway-repair/`), under a stub `spoolway` and `gh`.

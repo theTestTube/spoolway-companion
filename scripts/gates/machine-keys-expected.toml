@@ -1,9 +1,9 @@
-# Machine-only keys of .spoolway/config.toml as spoolway 0.17.0 ships them. One `table.key = value` line per key the tracked file must
+# Machine-only keys of .spoolway/config.toml as spoolway 0.19.0 ships them. One `table.key = value` line per key the tracked file must
 # carry; a key not listed here must be absent: no `agents.<profile>.concurrency`, no price row,
 # no `slots` or `context_window` under `[models]`. The three `unattended` lines keep an unattended
 # run and its cost ceiling out of the tracked file: they are set in the machine's override
 # layer. The single `[models."claude-*"]` line
-# is the one deliberate exception: `prompt_cache_ttl` is a project decision, tracked so 0.17.0's
+# is the one deliberate exception: `prompt_cache_ttl` is a project decision, tracked so 0.19.0's
 # "unset means no limit" default cannot let a lane resume an arbitrarily cold session.
 # 0.15.0 retired `dispatch.backend` and `housekeeping.price_max_age_days`; neither is expected here.
 #

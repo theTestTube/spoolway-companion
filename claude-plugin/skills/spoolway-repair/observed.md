@@ -1,6 +1,6 @@
 # What spoolway was observed to do
 
-Observed on spoolway 0.6.0 with two throwaway tasks (2026-10-07), each read from outside the lanes, and with two more on 2026-10-15 (`spoolway 0.6.0`): `probe-10-a`, retreated and queued again, and `probe-10-b`, unqueued with every commit already on the remote. Observed once each: on another version, check before promising.
+Observed on spoolway 0.6.0 (the sections below are 0.6.0's unless a heading names 0.19.0) with two throwaway tasks (2026-10-07), each read from outside the lanes, and with two more on 2026-10-15 (`spoolway 0.6.0`): `probe-10-a`, retreated and queued again, and `probe-10-b`, unqueued with every commit already on the remote. Observed once each: on another version, check before promising.
 
 ## A named resume
 
@@ -14,21 +14,30 @@ Observed on spoolway 0.6.0 with two throwaway tasks (2026-10-07), each read from
 - UNVERIFIED, an accepted known limit (owner decision, 2026-10-13): an agent judgment failing after a named resume. Only a command step was made to fail; the refusal is the same mechanism, so the same parking is expected.
 - UNVERIFIED: a block a lane reports itself, where a session is held.
 
-## The forced unqueue of a started task
+## The unqueue of a started task (spoolway 0.19.0)
 
-It is refused while a dispatcher runs, naming its pid. Without the force flag it is refused on a started task and changes nothing.
+What was run on 0.19.0: `spoolway queue unqueue --help` and `spoolway queue pause --help`, read-only (the fixtures `tests/fixtures/spoolway-repair/unqueue-help.txt` and `pause-help.txt` are their output, verbatim). No unqueue was run on 0.19.0 by this repository: every behaviour below is **taken from that help text and the release notes (0.18.0, 0.18.1, 0.19.0), not observed**. UNVERIFIED: a live unqueue of a started task on 0.19.0, and every row of the table that the help text does not state.
 
-| Item | After the forced unqueue |
-|---|---|
-| Document | In the pending directory, gone from the queue, not archived. The keys of the run are stripped (`stage`, `run`, `branch`, `cut_from`, `base_commit`, `worktree_path`, workspace and pane ids); `base`, the last report, `blocked_from`, `resume`, the arrival and round counts, `arrived_from`, `steps`, and the body with its Status Log and Handoff are kept. The task contract accepts it as it is. |
-| Worktree | Removed. |
-| Uncommitted work | Tracked and untracked files alike, in one commit on the local branch, subject `wip(<task>): blocked` (seen as `d74ce94 wip(probe-398-b): blocked`). Not a project commit type: it is to be rewritten by hand before a merge. With a clean tree no commit is made. |
-| Local branch | Kept when it holds commits no remote has, ahead of the remote by the unqueue's commit if there is one; the unqueue says so: "kept branch `task/probe-10-a` — it has commits no remote has". Deleted, with no line saying so, when the tree is clean and the remote already holds every commit (`probe-10-b`: the output was only "removed worktree …" and "unqueued `probe-10-b` → …/pending/probe-10-b.md"; `task/probe-10-b` gone locally, still on the remote at `1bc98e3`; seen again on the second retreat of `probe-10-a`, whose branch the first retreat had pushed). |
-| Remote branch | Untouched: the unqueue pushes nothing. |
-| Scratch space | Deleted. |
-| Command-step logs | Left in place. |
-| Lane sessions | The workspace is closed; the transcripts and system prompts remain. |
-| Tracker | No comment on the ticket, and the in-progress label stays on it. |
+- `--force` is gone from `queue unqueue` (retired by 0.18.0): the help lists only `--json` and `--repo`. Any stopped task is unqueued with the bare command, and a `blocked` task needs no `queue pause`. A running task is refused, "naming the pause command to run first" (help text).
+- A started task has "its worktree and its local `task/<id>` branch deleted whatever they hold, with no commit first, all or nothing" (help text). 0.6.0's `--force` recorded uncommitted work in a `wip(<task>): blocked` commit; 0.19.0 does not. Loose files and unpushed commits are lost unless they were committed and pushed before. The retreat therefore commits, pushes and checks the remote first (`repair.sh retreat`).
+- It also takes "every task after it in its group" back to pending, and prints one line per task it moved and what it deleted.
+
+| Item | After the unqueue on 0.19.0 | Source |
+|---|---|---|
+| Document | In the pending directory, "stripped of every reserved key" so `queue add --from` takes it again. Whether the arrival counts and the Status Log survive as on 0.6.0 is UNVERIFIED on 0.19.0. | help text; the rest 0.6.0 |
+| Worktree | Deleted, whatever it holds. | help text |
+| Uncommitted work | Lost. No commit is made. | help text |
+| Local branch | Deleted, whatever it holds. | help text |
+| Remote branch | Untouched (0.6.0: the unqueue pushes nothing). UNVERIFIED on 0.19.0. | 0.6.0 |
+| Scratch space | Deleted (0.6.0). UNVERIFIED on 0.19.0. | 0.6.0 |
+| Command-step logs | Left in place (0.6.0). UNVERIFIED on 0.19.0. | 0.6.0 |
+| Tracker | No comment, and the in-progress label stays (0.6.0). UNVERIFIED on 0.19.0. | 0.6.0 |
+
+The dispatcher refusal is also 0.6.0's: UNVERIFIED on 0.19.0, so the retreat keeps refusing while a dispatcher runs.
+
+### What 0.6.0 did (historical)
+
+On 0.6.0 the flag was `--force`: it recorded uncommitted work in one commit, subject `wip(<task>): blocked` (seen as `d74ce94 wip(probe-398-b): blocked`), kept a local branch that held commits no remote had, and deleted one the remote held in full (`probe-10-b`). That behaviour is retired; the retreat no longer expects any of it.
 
 ## A re-queue of a retreated document
 

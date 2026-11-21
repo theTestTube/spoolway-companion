@@ -12,7 +12,7 @@ A person starts this when a spoolway task is **doomed**: parked on `blocked` wit
 
 **The person's word** is a yes, in this session, to the exact command or draft you have just shown. Each resume, unqueue, push, comment and issue needs its own. Your own writes are the salvage folder and commits in the task's worktree; the dispatcher, the queue, pipelines, prompts and the tracked config stay the person's, and a defect in them becomes a finding (step 6).
 
-What spoolway 0.6.0 was observed to do on each road sits in [observed.md](observed.md). Read it before you tell the person what a resume or an unqueue will leave behind, and whenever `spoolway --version` is not 0.6.0: what it lists is then to be checked, not promised.
+What spoolway was observed to do on each road sits in [observed.md](observed.md): the resume on 0.6.0, the unqueue's behaviour as 0.19.0's help text and release notes state it (not run live: UNVERIFIED where it says so). Read it before you tell the person what a resume or an unqueue will leave behind, and whenever `spoolway --version` is not 0.19.0: what it lists is then to be checked, not promised.
 
 A worked example, a task doomed twice over, sits in [smoke-implement-spec.md](smoke-implement-spec.md). Read it when a diagnosis looks unlike the plain case, or to compare your conclusions with a known one.
 
@@ -88,29 +88,25 @@ Done when the resume has run on the person's word and, once the handover has ope
 
 Run `repair.sh retreat <task>`. It is refused while a dispatcher runs (`dispatcher-running`: ask the person to stop it; stopping it is theirs) and while salvage is incomplete (run step 2 again).
 
-Before the unqueue, tell the person what it leaves and what it destroys, from `expect` and from [observed.md](observed.md): the worktree and the scratch space go, the command logs stay, the in-progress label stays on the ticket, and the document goes back to the pending directory with its arrival counts kept. A re-queue of that document starts with fresh counts (`queue add` drops them) and carries on from the branch as it stands; say so, and do not offer to clear the counts.
+Before anything, tell the person what the 0.19.0 unqueue does, from `expect` and from [observed.md](observed.md): it deletes the task's worktree and its local branch, **whatever they hold and with no commit first**, so loose files and commits the remote lacks are lost unless they are committed and pushed before. That is why the steps put the commit and the push ahead of the unqueue. The scratch space goes, the command logs stay, the in-progress label stays on the ticket, and the document goes back to the pending directory; these last facts are 0.6.0's and UNVERIFIED on 0.19.0. A re-queue of that document starts with fresh counts (`queue add` drops them) and carries on from the branch as the remote holds it; say so, and do not offer to clear the counts. A `blocked` task needs no `queue pause`, and no step prints `--force`: 0.18.0 retired it. The retreat is refused (`unqueue-help-not-0-19`) when the binary's `queue unqueue --help` still offers `--force`: that binary is not the one observed.
 
-What happens to the branch is `expect.branch.fate`:
-
-- `kept-with-wip`: uncommitted work lands in one local commit under the subject `expect.uncommitted.commit`, `wip(<task>): blocked`. Say, before the push, that this commit must be rewritten to one of the project's commit types before the branch is merged by hand, and that you never rewrite, amend or squash it: that is the person's.
-- `kept`: a clean tree with commits no remote has; the branch stays and is pushed. Nothing about a commit is said.
-- `deleted`: a clean tree the remote already holds in full; the unqueue deletes the local branch, and `steps` has no push.
-
-Then take `steps` in order, each on the person's word:
+Take `steps` in order, each on the person's word:
 
 1. `comment`: show the draft of what was built and what was left (`left`; with no numbered finding it names the judgment that failed, and a section with nothing to list says so); the person posts it on the bound issue, or has you post it (`gh issue comment --help`).
-2. `unqueue`: show `shown`, checked against `spoolway queue unqueue --help`, and run it.
-3. `push`, when the branch is kept: first name the unqueue's commit when there is one (`git log -1 --format='%h %s' <branch>`, its subject `wip(<task>): blocked`) with the step's `warning`, then show `shown` and run it. This push is the one that counts: it carries that commit.
-4. `verify`: run `repair.sh pushed <task>`.
-5. `unlabel`: the in-progress label is taken off the ticket by hand; read its name from the ticket's labels.
+2. `commit`, only when the worktree holds loose work (`expect.uncommitted.files`): show `shown` (it stages everything in the worktree and commits it under a `chore(<task>): …` subject) and run it. Say that this commit is the retreat's own and a project commit type; nothing is rewritten.
+3. `push`: show `shown` and run it. It is a no-op when the remote already holds the branch.
+4. `check-remote`: run `repair.sh pushed <task>`. It must say `ok` (the remote holds every commit of the local branch, and the worktree is clean). If it does not, stop: the unqueue would lose work.
+5. `unqueue`: show `shown`, checked against `spoolway queue unqueue --help`, and run it.
+6. `verify`: run `repair.sh pushed <task>` again: the local branch is gone, and the remote must stand at or past the tip the first diagnosis saw.
+7. `unlabel`: the in-progress label is taken off the ticket by hand; read its name from the ticket's labels.
 
-Done when `repair.sh pushed <task>` says `ok` (the remote branch holds every commit of the local one, or, the local branch deleted, the remote stands at the tip the first diagnosis saw), `pending_document.present` is true, and the person has been told about the label and, when `wip_commit` is set, about that commit.
+Done when the last `repair.sh pushed <task>` says `ok`, `pending_document.present` is true, and the person has been told about the label.
 
 ## 6. Record
 
 Run `repair.sh record <task> <advance|retreat|door>` with the road taken. It writes drafts and posts nothing.
 
-The cause and its evidence come from `first-diagnosis.json` of the salvage folder (`cause.source`), whatever the task's stage is by now: after a resume, after `done`, after the forced unqueue. `no-first-diagnosis` means the task has moved on and no salvage ran while it stood on `blocked`: write the cause yourself, from the status log. For an advance or the door the comment also names the repair's commits (`repair`), the resume line of the status log and the stage reached (`outcome`), as far as the task document shows them; where it says a thing is not readable or not shown, fill it in from what you saw or leave it said. When the branch holds the unqueue's commit (`wip_commit`), the comment names it and says it must be rewritten to one of the project's commit types before a merge by hand; with none, it says nothing of it.
+The cause and its evidence come from `first-diagnosis.json` of the salvage folder (`cause.source`), whatever the task's stage is by now: after a resume, after `done`, after the unqueue. `no-first-diagnosis` means the task has moved on and no salvage ran while it stood on `blocked`: write the cause yourself, from the status log. For an advance or the door the comment also names the repair's commits (`repair`), the resume line of the status log and the stage reached (`outcome`), as far as the task document shows them; where it says a thing is not readable or not shown, fill it in from what you saw or leave it said.
 
 Done when you have shown the person each draft with its path, and each has gone out on their word or stays as a file they know of:
 

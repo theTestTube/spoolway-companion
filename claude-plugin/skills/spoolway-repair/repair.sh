@@ -19,12 +19,12 @@
 #                               the recommended step) with its status-log message, or why it is
 #                               refused. A step past a judgment that has not passed is the one-way
 #                               door: no command until salvage is complete and --confirmed is given.
-#   repair.sh retreat  <task>   the retreat's steps in order, with the forced unqueue and the push
+#   repair.sh retreat  <task>   the retreat's steps in order: the commit of loose work, the push, the check, the plain unqueue
 #                               as commands; refused while a dispatcher runs. Writes one draft.
 #   repair.sh pushed   <task>   read-only; whether the remote branch holds every commit of the local
 #                               one, with nothing left uncommitted in the worktree; with the local
-#                               branch deleted by the unqueue, whether the remote stands at the tip
-#                               the first diagnosis saw. Names the unqueue's commit, if any.
+#                               branch deleted by the unqueue, whether the remote stands at or past
+#                               the tip the first diagnosis saw.
 #   repair.sh record   <task> <advance|retreat|door>
 #                               drafts the comment for the bound issue, the pull request's repair
 #                               section, and one finding per pipeline or task-document defect. The
@@ -156,11 +156,6 @@ def parse_pipelines:
 def passes_at_once($doc; $s):
   (($doc.skip_steps // []) | any(. == $s))
   or (($s == "implement" or $s == "implement-spec") and (($doc.implementer // "implement") != $s));
-# The commit a forced unqueue makes of a dirty worktree, under spoolway 0.6.0's own subject
-# (observed.md), and that commit on a branch: `<sha> <subject>`, or null.
-def wip_subject($task): "wip(\($task)): blocked";
-def wip_commit($g): wip_subject($g.task) as $s
-  | [$g.git.commits_since_base[]? | select(sub("^[0-9a-f]+ "; "") == $s)] | first // null;
 JQ
 
 # ---------------------------------------------------------------------------------------------
@@ -202,7 +197,7 @@ first_file=$dest/first-diagnosis.json
 unknown_task() { jq -n --arg task "$task" '{task: $task, refused: ["unknown-task"]}'; exit 1; }
 
 # The document as spoolway holds it. Once a road is taken spoolway may hold it no longer, or hold it
-# stripped of the keys that name the branch (a forced unqueue does that): `pushed` and `record` then
+# stripped of the keys that name the branch (the unqueue does that): `pushed` and `record` then
 # read the copy salvage kept.
 document_source=spoolway
 if ! doc=$(sp queue show "$task" 2>/dev/null) || ! grep -q '^branch:' <<<"$doc"; then
@@ -646,7 +641,7 @@ roads($p; $pipelines; $salvage) as $r
       (if $d.dispatcher.running then "dispatcher-running" else empty end),
       (if $r.salvage.complete then empty else "salvage-incomplete" end),
       (if ($d.git.branch // "") == "" then "no-branch" else empty end),
-      (if $flags == "true" then empty else "unqueue-flag-not-in-help" end) ] as $refused
+      (if $flags == "true" then empty else "unqueue-help-not-0-19" end) ] as $refused
     | ($dest + "/drafts/retreat-built-and-left.md") as $draft
     # The judgment that last left by its fail route, read from the log: what is left when no numbered
     # finding says it.
@@ -655,31 +650,28 @@ roads($p; $pipelines; $salvage) as $r
         | {step, fail_to: .fail}] | last // null) as $failed
     | (if $failed == null then null else
          $failed + {log_line: ([$p.log[] | select(test("^- \\S+ \\S+ `" + $failed.step + "` exited "))] | last // null)} end) as $failed
-    # What the unqueue does to the local branch, as observed (observed.md): uncommitted work lands in
-    # one commit under the subject below and the branch is kept; a clean tree with commits no remote
-    # has keeps it; a clean tree the remote holds in full loses it, and there is nothing to push.
+    # What the unqueue does (spoolway 0.19.0, observed.md): a started task has its worktree and its
+    # local branch deleted whatever they hold, with no commit first. Loose work is therefore committed
+    # and pushed here, and the remote is checked to hold the tip, before the unqueue is printed.
     | ($d.git.worktree.changes // [] | length) as $loose
-    | wip_subject($d.task) as $wip
-    | (if $loose > 0 then "kept-with-wip"
-       elif $d.git.remote.branch == "present" and $d.git.remote.commits_not_on_remote == 0 then "deleted"
-       else "kept" end) as $fate
-    | ("the unqueue adds the commit `\($wip)`: rewrite it to one of the project's commit types before the branch is merged by hand; this skill never rewrites, amends or squashes it") as $wip_warning
+    | ("chore(\($d.task)): keep the work of a retreated task") as $keep
     | {task: $d.task, road: "retreat", refused: $refused, dispatcher: $d.dispatcher,
        left: {findings: [$r.open[].finding], criteria: [$r.unpassable[].n], judgment: $failed},
        steps: (if ($refused | length) > 0 then [] else [
          {do: "comment", on: $r.bound_issue, draft: $draft},
-         {do: "unqueue", command: ["spoolway", "queue", "unqueue", $d.task, "--force"]},
-         (if $fate == "deleted" then empty else
-            {do: "push", command: ["git", "-C", $main, "push", "origin", $d.git.branch]}
-            + (if $fate == "kept-with-wip" then {warning: $wip_warning} else {} end) end),
+         (if $loose > 0 then
+            {do: "commit", files: $loose,
+             command: ["bash", "-c", "git -C \"$1\" add -A && git -C \"$1\" commit -m \"$2\"", "retreat-commit", $d.git.worktree.path, $keep]}
+          else empty end),
+         {do: "push", command: ["git", "-C", $main, "push", "origin", $d.git.branch]},
+         {do: "check-remote", command: ["bash", $script, "pushed", $d.task]},
+         {do: "unqueue", command: ["spoolway", "queue", "unqueue", $d.task]},
          {do: "verify", command: ["bash", $script, "pushed", $d.task]},
          {do: "unlabel", on: $r.bound_issue, by: "hand"}] | map(if .command then . + {shown: (.command | shown)} else . end) end),
-       expect: {observed_with: "spoolway 0.6.0", running: $d.spoolway,
+       expect: {observed_with: "spoolway 0.19.0", running: $d.spoolway,
                 worktree: {path: $d.git.worktree.path, removed: true},
-                uncommitted: ({files: $loose, pushed_by_the_unqueue: false}
-                              + (if $loose > 0 then {lands_in: "one local commit", commit: $wip} else {} end)),
-                branch: {name: $d.git.branch, fate: $fate,
-                         push: ($fate != "deleted"), remote_sha: $d.git.remote.sha},
+                uncommitted: {files: $loose, committed_by_the_retreat: ($loose > 0), commit: (if $loose > 0 then $keep else null end)},
+                branch: {name: $d.git.branch, local: "deleted by the unqueue", remote: "holds the tip, checked before the unqueue", remote_sha: $d.git.remote.sha},
                 scratch: {files: ($d.scratch | length), deleted: true},
                 commands: {files: ($d.commands | length), deleted: false},
                 document: {to: ($home + "/pending/" + $d.task + ".md"), keeps_arrivals: $r.arrivals,
@@ -693,8 +685,11 @@ roads($p; $pipelines; $salvage) as $r
          + "Built, on branch `\($d.git.branch)` (\($d.git.commits_since_base | length) commits since its base):\n"
          + ([$d.git.commits_since_base[] | "- \(.)\n"] | listed)
          + (if $loose > 0 then
-              "\nNot committed when the run stopped (\($loose) file(s)); the unqueue records them in one more commit, `\($wip)`, which must be rewritten to one of the project's commit types before the branch is merged by hand:\n"
-              + ([$d.git.worktree.changes[] | "- `\(.)`\n"] | join(""))
+              "
+Not committed when the run stopped (\($loose) file(s)); the retreat commits them (`\($keep)`) and pushes them before the unqueue, which would delete them:
+"
+              + ([$d.git.worktree.changes[] | "- `\(.)`
+"] | join(""))
             else "" end)
          + "\nLeft:\n"
          + ([$r.open[] | "- \(finding_label): \(.text | cut(200))\n"]
@@ -731,9 +726,7 @@ roads($p; $pipelines; $salvage) as $r
              what: "a plain resume of a task blocked from `\($f.plain_resume.step)` crosses \($f.plain_resume.passes_at_once | map("`\(.)`") | join(", ")), which passes at once, into `\($f.plain_resume.refused_at)`, whose loop is spent, and bounces back to `blocked`",
              evidence: ($f.last_refusal // "")}
           else empty end) ]) as $defects
-    | wip_commit($d) as $wip
     | {task: $d.task, road: $road, refused: $refused, document_source: $source, bound_issue: $r.bound_issue,
-       wip_commit: $wip,
        cause: {kind: $f.cause.kind, evidence: $f.cause.evidence, source: (if $first != null then "first-diagnosis" else "this-diagnosis" end)},
        repair: $made, outcome: $outcome,
        salvage: $r.salvage.destination, defects: [$defects[] | {kind, what}],
@@ -758,8 +751,7 @@ roads($p; $pipelines; $salvage) as $r
             + "- Branch: `\($d.git.branch)`; " + (if $d.git.local_branch_exists then "commits the remote lacks: \($d.git.remote.commits_not_on_remote // "unknown")"
                                                    elif $d.git.remote.branch == "present" then "deleted locally by the unqueue; the remote holds it at \($d.git.remote.sha[0:7])"
                                                    else "neither local nor on the remote" end) + "\n"
-            + (if $wip == null then "" else
-                 "- Commit `\($wip)` was made by the unqueue from the files left uncommitted: rewrite it to one of the project's commit types before the branch is merged by hand. spoolway-repair never rewrites, amends or squashes it.\n" end))}]
+            )}]
          + (if $road == "retreat" then [] else
              [{kind: "pull-request", path: ($dest + "/drafts/pull-request-repair.md"),
                findings: (if $road == "door" then ($r.open | length) else 0 end), body: pr_section($r | .d.cause = $f.cause; $road)}] end)
@@ -838,7 +830,8 @@ advance() {
 
 retreat() {
   local flags=true
-  help_has --force queue unqueue || flags=false
+  # 0.19.0's `queue unqueue` has no `--force`; a binary whose help offers one is not the one observed.
+  ! help_has --force queue unqueue || flags=false
   finish "$(roads retreat "$flags")"
 }
 
@@ -851,18 +844,22 @@ pushed() {
   wt=$(jq -r '.fm.worktree_path // ""' <<<"$parsed")
   [ -n "$branch" ] || die "the document of \`$task\` names no branch" 2
   git=$(git_state "$branch" "$base" "$wt")
-  # A local branch the unqueue deleted is pushed when the remote stands at the tip the first
+  # A local branch the unqueue deleted is pushed when the remote stands at, or past, the tip the first
   # diagnosis saw: the unqueue deletes only a branch the remote holds in full.
   tip=$(jq -r --arg base "$base" '(.git.commits_since_base[0] // "" | split(" ")[0]) as $t | if $t != "" then $t else $base end' <<<"$(first_diagnosis)" 2>/dev/null || true)
-  out=$(jq --arg task "$task" --arg source "$document_source" --arg pending "$pending/$task.md" --arg tip "$tip" \
+  # The retreat commits loose work before the push, so the remote may stand ahead of the tip the first
+  # diagnosis saw: it holds the branch when that tip is an ancestor of it.
+  local rsha descends=false
+  rsha=$(jq -r '.remote.sha // ""' <<<"$git")
+  if [ -n "$tip" ] && [ -n "$rsha" ] && git -C "$main_checkout" merge-base --is-ancestor "$tip" "$rsha" 2>/dev/null; then descends=true; fi
+  out=$(jq --argjson descends "$descends" --arg task "$task" --arg source "$document_source" --arg pending "$pending/$task.md" --arg tip "$tip" \
      --argjson in_pending "$([ -f "$pending/$task.md" ] && echo true || echo false)" "$JQ_LIB"'
     ((.worktree.changes // []) | length == 0) as $clean
     | (.local_branch_exists and .remote.branch == "present" and .remote.commits_not_on_remote == 0) as $both
-    | ((.local_branch_exists | not) and .remote.branch == "present" and $tip != "" and (.remote.sha // "" | startswith($tip))) as $remote_only
+    | ((.local_branch_exists | not) and .remote.branch == "present" and $tip != "" and $descends) as $remote_only
     | {ok: ($clean and ($both or $remote_only)),
        task: $task, branch, local_branch_exists, remote, worktree,
        local_branch: (if .local_branch_exists then "kept" elif $remote_only then "deleted; the remote holds the tip of the first diagnosis" else "missing" end),
-       wip_commit: wip_commit({task: $task, git: .}),
        pending_document: {path: $pending, present: $in_pending}, document_source: $source}' <<<"$git")
   printf '%s\n' "$out"
   jq -e .ok <<<"$out" >/dev/null
