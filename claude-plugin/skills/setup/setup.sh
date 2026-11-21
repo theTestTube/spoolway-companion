@@ -13,6 +13,7 @@
 #   setup.sh probe <version>                 download and hash-check the To-Be binary; installs nothing
 #   setup.sh probe-run [<dir>]               sync --dry-run, pipeline check, doctor --no-live under both
 #   setup.sh queue-snapshot                  every project home's tasks, lanes, branches, unpushed commits
+#   setup.sh discover                        the checkouts a version change touches and what each runs on spoolway
 #   setup.sh salvage <task>                  a task's diff, untracked files, logs and a verified bundle
 #   setup.sh fresh-id <id>...                whether task/<id> is absent from origin
 #
@@ -55,7 +56,7 @@ installed=$config_dir/plugins/installed_plugins.json
 
 die() { echo "spoolway-setup: $*" >&2; exit 1; }
 usage() {
-  echo "usage: setup.sh detect [<consumer>] | plan|apply <answers> [<consumer>] | labels <owner/repo> [--create] | bump <sha> [<consumer>] | memex plan|apply <answers> | spoolway-version [<version>] | gap <to> | probe <version> | probe-run [<dir>] | queue-snapshot | salvage <task> | fresh-id <id>..." >&2
+  echo "usage: setup.sh detect [<consumer>] | plan|apply <answers> [<consumer>] | labels <owner/repo> [--create] | bump <sha> [<consumer>] | memex plan|apply <answers> | spoolway-version [<version>] | gap <to> | probe <version> | probe-run [<dir>] | queue-snapshot | discover | salvage <task> | fresh-id <id>..." >&2
   exit 64
 }
 say() { printf '%s\n' "$*"; }
@@ -921,6 +922,90 @@ queue_snapshot() {
   say "saved to $out"
 }
 
+# discover: the checkouts a spoolway version change touches, found from signals on disk, with
+# what each runs on spoolway. Read-only; the rules are in discovery.md.
+disc_key() { local k; k=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2> /dev/null) && { cd -P "$k/.." 2> /dev/null && pwd; } || printf '%s\n' "$1"; }
+
+# disc_candidates: `<path>\t<source>` lines, one per finding, from the three sources.
+disc_candidates() {
+  local home root line repo
+  printf '%s\t%s\n' "$consumer" "current checkout"
+  while IFS= read -r home; do
+    root=$(proj_value "$home/project.toml" root)
+    [ -n "$root" ] && printf '%s\t%s\n' "$root" "registry $home"
+  done < <(project_homes)
+  if [ -f "$consumer/$PROJECTS" ]; then
+    while IFS= read -r line; do
+      repo=$(sed -nE 's/^\|[[:space:]]*`?([A-Za-z0-9_.-]+\/)?([A-Za-z0-9_.-]+)`?[[:space:]]*\|.*/\2/p' <<<"$line")
+      case $repo in '' | Repository | ---*) continue ;; esac
+      printf '%s\t%s\n' "$(dirname "$consumer")/$repo" "$PROJECTS names $(sed -E 's/^\|[[:space:]]*([^|]*[^|[:space:]])[[:space:]]*\|.*/\1/' <<<"$line")"
+    done < "$consumer/$PROJECTS"
+  fi
+}
+
+# disc_report <path> <sources>: one consumer's facts, tab-separated.
+disc_report() {
+  local c=$1 src=$2 home= h root pin p name rel hash h2 f d line json id state n
+  say "consumer	$c	found by: $src"
+  pin=$(sed -n 's/^revision //p' "$c/$LOCK" 2> /dev/null | head -n 1)
+  say "pin	$c	${pin:-none: no $LOCK}"
+  for p in "$c"/.spoolway/pipelines/*.yml; do
+    [ -f "$p" ] || continue
+    name=${p##*/}; rel=.spoolway/pipelines/$name
+    hash=$(awk -F'\t' -v p="$rel" '$2 == p { split($1, a, " "); print a[2] }' "$c/$LOCK" 2> /dev/null)
+    h2=$(awk -F'\t' -v p="$rel" '$2 == p { split($1, a, " "); print a[2] }' "$plugin_root/spoolway/types.manifest")
+    if [ -z "$hash" ]; then say "pipeline	$c	${name%.yml}	own (not in the lock)"
+    elif [ "$hash" = "$h2" ]; then say "pipeline	$c	${name%.yml}	companion (lock hash matches this revision's types)"
+    else say "pipeline	$c	${name%.yml}	companion, another revision (lock hash differs from this revision's)"; fi
+  done
+  for d in "$c"/.spoolway/prompts/*/; do [ -d "$d" ] && say "prompt	$c	$(basename "$d")"; done
+  if [ -f "$c/$SUBSET" ]; then say "subset	$c	present	$(grep -cvE '^[[:space:]]*(#|$)' "$c/$SUBSET" || true) paths"; else say "subset	$c	absent"; fi
+  for h in $(project_homes); do
+    root=$(proj_value "$h/project.toml" root)
+    if [ -n "$root" ] && [ "$(disc_key "$root")" = "$(disc_key "$c")" ]; then home=$h; break; fi
+  done
+  if [ -z "$home" ]; then
+    say "override	$c	none found: no registry project holds this checkout"
+  else
+    n=0
+    for f in "$home"/overrides/*; do
+      [ -f "$f" ] || continue
+      n=1; say "override	$c	${f##*/}	$(grep -vE '^[[:space:]]*(#|$)' "$f" | head -n 3 | tr '\n' ';' | sed 's/;$//')"
+    done
+    [ $n = 1 ] || say "override	$c	none"
+  fi
+  while IFS= read -r line; do
+    say "spoolway-pin	$c	$line"
+  done < <(cd "$c" && grep -rnoE --exclude-dir=.git --exclude-dir=.scratch --exclude-dir=node_modules -e 'spoolway[-_ @/]*v?[0-9]+\.[0-9]+\.[0-9]+' -- .github scripts docs README.md CLAUDE.md 2> /dev/null | sed -E 's/^([^:]+:[0-9]+):.*[^0-9.]v?([0-9]+\.[0-9]+\.[0-9]+)$/\1	\2/' | LC_ALL=C sort -u)
+  if [ -z "$home" ]; then say "task	$c	unreadable: no registry project holds this checkout"
+  elif ! json=$(spw 60 queue list --json -C "$(proj_value "$home/project.toml" root)" 2> /dev/null) || ! jq -e . > /dev/null 2>&1 <<<"$json"; then
+    say "task	$c	unreadable: queue list --json failed"
+  else
+    n=0
+    while IFS=$'\t' read -r id state; do n=1; say "task	$c	$id	$state"; done < <(jq -r '.tasks[] | select(.state == "queued" or .state == "blocked") | [.id, .state] | @tsv' <<<"$json")
+    [ $n = 1 ] || say "task	$c	none queued or blocked"
+  fi
+}
+
+discover() {
+  local path source key i found
+  local -a keys=() paths=() srcs=()
+  while IFS=$'\t' read -r path source; do
+    key=$(disc_key "$path")
+    found=-1
+    for i in "${!keys[@]}"; do [ "${keys[$i]}" = "$key" ] && found=$i; done
+    if [ $found -ge 0 ]; then srcs[found]="${srcs[$found]}; $source"; else keys+=("$key"); paths+=("$path"); srcs+=("$source"); fi
+  done < <(disc_candidates)
+  for i in "${!paths[@]}"; do
+    path=${paths[$i]}
+    if [ ! -d "$path" ]; then say "unreadable	$path	found by: ${srcs[$i]}	checkout gone: no such directory"
+    elif ! git -C "$path" rev-parse --git-dir > /dev/null 2>&1; then say "unreadable	$path	found by: ${srcs[$i]}	not a git checkout"
+    elif [ ! -d "$path/.spoolway" ]; then say "unreadable	$path	found by: ${srcs[$i]}	no .spoolway/ directory"
+    elif [ ! -r "$path/.spoolway" ]; then say "unreadable	$path	found by: ${srcs[$i]}	no access to .spoolway/"
+    else disc_report "$path" "${srcs[$i]}"; fi
+  done
+}
+
 # salvage <task>: what a task's worktree holds that origin lacks, kept under ./.scratch/.
 salvage() {
   local task=$1 home doc wt branch base dir f ahead
@@ -974,6 +1059,7 @@ case "${1:-}" in
   probe) [ $# -eq 2 ] || usage; consumer=$(consumer_dir); probe "$2" ;;
   probe-run) [ $# -le 2 ] || usage; consumer=$(consumer_dir); probe_run "${2:-}" ;;
   queue-snapshot) [ $# -eq 1 ] || usage; consumer=$(consumer_dir); queue_snapshot ;;
+  discover) [ $# -eq 1 ] || usage; consumer=$(consumer_dir); discover ;;
   salvage) [ $# -eq 2 ] || usage; consumer=$(consumer_dir); salvage "$2" ;;
   fresh-id) [ $# -ge 2 ] || usage; consumer=$(consumer_dir); shift; fresh_id "$@" ;;
   *) usage ;;

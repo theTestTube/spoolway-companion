@@ -206,6 +206,45 @@ check "salvage: nothing outside ./.scratch/ changed, the worktree is as it was" 
 out=$(cd "$c" && bash "$setup" salvage nosuch 2>&1); status=$?
 check "salvage: an unknown task stops" '[ $status -ne 0 ] && grep -q "no task nosuch" <<<"$out"' "$out"
 
+# --- discover -----------------------------------------------------------------------------------
+# Synthetic consumers: the current checkout (names a sibling and a missing repository in its
+# projects doc), a registry project with overrides and tasks, and the sibling with its own pipeline.
+mf=$repo/claude-plugin/spoolway/types.manifest
+mfhash() { awk -F'\t' -v p="$1" '$2 == p { split($1, a, " "); print a[2] }' "$mf"; }
+mkconsumer() { # <name> <lockrev>: a checkout with a lock, a companion pipeline, an outdated one, an own one
+  local d; d=$(consumer "$1")
+  mkdir -p "$d/.spoolway/pipelines" "$d/.spoolway/prompts/alpha" "$d/.github/workflows"
+  printf 'x\n' > "$d/.spoolway/pipelines/own-flow.yml"; printf 'x\n' > "$d/.spoolway/pipelines/developing.yml"; printf 'x\n' > "$d/.spoolway/pipelines/materializing.yml"
+  printf '# header\nplugin spoolway-companion\nrevision %s\n100644 %s\t.spoolway/pipelines/developing.yml\n100644 deadbeef\t.spoolway/pipelines/materializing.yml\n' "$2" "$(mfhash .spoolway/pipelines/developing.yml)" > "$d/.spoolway/plugin.lock"
+  printf '.spoolway/pipelines/developing.yml\n# c\n\n' > "$d/.spoolway/types.subset"
+  printf 'x\n' > "$d/.spoolway/prompts/alpha/a.md"
+  printf 'steps:\n  - run: install spoolway v0.17.0\n' > "$d/.github/workflows/ci.yml"
+  git -C "$d" add -A; git -C "$d" commit -q -m files
+  printf '%s\n' "$d"
+}
+dcur=$(mkconsumer disc-cur aaa111); dsib=$(mkconsumer sibling bbb222); dreg=$(mkconsumer regd ccc333)
+mkdir -p "$dcur/docs/agents"
+printf '# Projects\n\n| Repository | Role |\n|---|---|\n| acme/disc-cur | this repository |\n| acme/sibling | extra repository |\n| acme/missing | extra repository |\n' > "$dcur/docs/agents/projects.md"
+rh=$HOME/.spoolway/regd-rrr111; mkdir -p "$rh/overrides"
+printf 'id = "rrr111"\nroot = "%s"\n' "$dreg" > "$rh/project.toml"
+printf '[pipelines.developing]\nmodel = "other"\n' > "$rh/overrides/pipeline.toml"
+printf '{"tasks":[{"id":"waiting","state":"queued"},{"id":"stuck","state":"blocked"},{"id":"busy","state":"running"}]}\n' > "$HOME/queue-json/regd.json"
+ch=$HOME/.spoolway/disc-cur-ddd222; mkdir -p "$ch"; printf 'id = "ddd222"\nroot = "%s"\n' "$dcur" > "$ch/project.toml"
+dbefore=$(snapshot "$dcur"); sbefore=$(snapshot "$dsib")
+out=$(cd "$dcur" && bash "$setup" discover 2>&1)
+check "discover: the three sources each find a candidate, named by source" \
+  'grep -q "^consumer	$dcur	found by: current checkout" <<<"$out" && grep -q "^consumer	$dreg	found by: registry $rh" <<<"$out" && grep -q "^consumer	$dsib	found by: docs/agents/projects.md names acme/sibling" <<<"$out"' "$out"
+check "discover: a candidate found by two sources is reported once, naming both" '[ "$(grep -c "^consumer	$dcur	" <<<"$out")" = 1 ] && grep -q "^consumer	$dcur	found by: current checkout; registry $ch" <<<"$out"' "$out"
+check "discover: a gone checkout, a checkout without .spoolway/ and a missing repository are named with the reason" \
+  'grep -q "^unreadable	$work/gone	.*checkout gone" <<<"$out" && grep -q "^unreadable	$proj	.*no .spoolway/ directory" <<<"$out" && grep -q "^unreadable	$work/missing	.*projects.md names acme/missing.*checkout gone" <<<"$out"' "$out"
+check "discover: the pin, the pipelines by lock hash, the prompts and the subset" \
+  'grep -q "^pin	$dsib	bbb222" <<<"$out" && grep -q "^pipeline	$dsib	developing	companion (lock hash matches" <<<"$out" && grep -q "^pipeline	$dsib	materializing	companion, another revision" <<<"$out" && grep -q "^pipeline	$dsib	own-flow	own" <<<"$out" && grep -q "^prompt	$dsib	alpha" <<<"$out" && grep -q "^subset	$dsib	present	1 paths" <<<"$out"' "$out"
+check "discover: the overrides with what each changes, and the spoolway version CI pins" \
+  'grep -q "^override	$dreg	pipeline.toml	\[pipelines.developing\];model = \"other\"" <<<"$out" && grep -q "^spoolway-pin	$dsib	.github/workflows/ci.yml:2	0.17.0" <<<"$out"' "$out"
+check "discover: only queued and blocked tasks, and a consumer outside the registry says so" \
+  'grep -q "^task	$dreg	waiting	queued" <<<"$out" && grep -q "^task	$dreg	stuck	blocked" <<<"$out" && ! grep -q "busy" <<<"$out" && grep -q "^task	$dsib	unreadable" <<<"$out"' "$out"
+check "discover: nothing in any checkout changed" '[ "$(snapshot "$dcur")" = "$dbefore" ] && [ "$(snapshot "$dsib")" = "$sbefore" ] && [ ! -e "$dcur/.scratch" ]'
+
 # --- the ignore guard and the whole-run check --------------------------------------------------
 c2=$(consumer open); : > "$c2/.git/info/exclude"
 out=$(cd "$c2" && bash "$setup" gap 0.20.0 2>&1); status=$?
