@@ -93,5 +93,5 @@ Out of scope. Doing any of these is a review failure, not a bonus.
 - 2026-10-09 01:12 → `blocked`: Checks fail only on the deliberate error in src/live401Retreat.ts (TS2322), and each pass from implement loops back here via implement-spec. Nothing left for this step to change; needs spoolway-repair by the owner.
 
 ## Handoff
-- `implement` — In this worktree node_modules is missing, so my local typecheck was red from unrelated environment errors (expo/tsconfig.base not found, lib targets); I did not confirm the only error is in src/live401Retreat.ts. The checks step should see it after a real install.
+- `implement` — In this worktree node_modules is missing, so my local typecheck was red from unrelated environment errors (the shared tsconfig base not found, lib targets); I did not confirm the only error is in src/live401Retreat.ts. The checks step should see it after a real install.
 - `implement` — Checks log confirms the single typecheck error is in src/live401Retreat.ts; left unrepaired on purpose, per the task.
