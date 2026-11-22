@@ -84,6 +84,12 @@ Done when you have stated, one line apiece:
 
 Done when each command of items 4 and 5 has an output saved under both binaries, or a named reason and the word UNVERIFIED; every difference is classed with a one-line cause; and `type -a spoolway` and `spoolway --version` print what step 1 recorded.
 
+### 2b. Discover the consumers
+
+Run `setup.sh discover` and show every line it printed; the rules are in [discovery.md](discovery.md). Ask the person which consumers to map: a consumer they drop is not mapped, and steps 3 to 6 run for the confirmed set only.
+
+Done when the person has confirmed, in words, the set of consumers to map, and you have repeated it back.
+
 ### 3. Map the gap
 
 Match the gap to the checkout's own files: scripts, prompts, pipelines, CI workflows, docs, config keys, every place that pins the As-Is, and the queued task documents. Take the evidence from the probe's output, not from a search of the text: a search only hints at what the binary's check settles. Class each hit as **before** (it breaks under the To-Be and its fix also works under the As-Is, so it can land before any install) or **after** (it needs the To-Be: a sync, a pin, documentation, a reload).
