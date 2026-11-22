@@ -5,19 +5,8 @@
   "extraKnownMarketplaces": {
     "spoolway-companion": {
       "source": {
-        "source": "settings",
-        "name": "spoolway-companion",
-        "plugins": [
-          {
-            "name": "spoolway-companion",
-            "source": {
-              "source": "git-subdir",
-              "url": "https://github.com/theTestTube/spoolway-companion.git",
-              "path": "claude-plugin",
-              "sha": "d23378c46e29f7e5436d8193cd9213b1d840d3a0"
-            }
-          }
-        ]
+        "source": "github",
+        "repo": "theTestTube/spoolway-companion"
       }
     }
   }

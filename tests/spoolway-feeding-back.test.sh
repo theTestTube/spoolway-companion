@@ -123,10 +123,9 @@ c="$work/consumer"
 mkdir -p "$plugin" "$config/plugins" "$home" "$c/.claude" "$c/.spoolway"
 cp -R "$real" "$plugin/spoolway"
 jq -n --arg p "$plugin" --arg sha "$REV" '{version: 2, plugins: {"spoolway-companion@spoolway-companion": [
-  {scope: "project", projectPath: "/elsewhere", installPath: $p, version: "6d82bbc6b8dc-afc78acc", gitCommitSha: $sha}]}}' \
+  {scope: "user", installPath: $p, version: "6d82bbc6b8dc-afc78acc", gitCommitSha: $sha}]}}' \
   > "$config/plugins/installed_plugins.json"
-jq -n --arg sha "$REV" '{extraKnownMarketplaces: {"spoolway-companion": {source: {source: "settings", name: "spoolway-companion", plugins: [
-  {name: "spoolway-companion", source: {source: "git-subdir", url: "https://github.com/theTestTube/spoolway-companion.git", path: "claude-plugin", sha: $sha}}]}}}}' \
+jq -n '{enabledPlugins: {"spoolway-companion@spoolway-companion": true}, extraKnownMarketplaces: {"spoolway-companion": {source: {source: "github", repo: "theTestTube/spoolway-companion"}}}}' \
   > "$c/.claude/settings.json"
 # The consumer's own files: this repository's config without its tracker hook, and its own scripts.
 awk '/^\[issue_tracking\]/ { skip = 1; next } /^\[/ { skip = 0 } !skip' "$repo/.spoolway/config.toml" > "$c/.spoolway/config.toml"

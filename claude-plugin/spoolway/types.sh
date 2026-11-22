@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The spoolway pipeline types, written from this plugin into a consumer's tracked setup. Every
-# consumer runs the same types at the revision it pins, so a fix lands once, here.
+# consumer runs the same types at the revision it recorded, so a fix lands once, here.
 #
 #   types.sh manifest            print the manifest of types/ (types.manifest is this, committed)
 #   types.sh write [<consumer>]  write types/ into the consumer (default: the current git
@@ -9,10 +9,11 @@
 # types/ mirrors the consumer path for path, with one rename: types/setup/ is the consumer's
 # .spoolway/. A nested .spoolway/ would be refused once this repo is a spoolway project itself.
 #
-# `write` takes its revision from the install record of the copy it runs from, and refuses unless
-# that revision is the one the consumer pins in .claude/settings.json: what is written is always
-# the pinned revision. It refuses, writing nothing, when this copy does not match its own
-# manifest, or when a path it would write or delete has uncommitted changes. A path the previous
+# `write` takes its revision from the install record of the copy it runs from and records it in
+# .spoolway/plugin.lock: the lock is the only place a consumer names the revision it took, and it
+# reads nothing from .claude/settings.json. It refuses, writing nothing, when this copy is not an
+# installed plugin, does not match its own manifest, or when a path it would write or delete has
+# uncommitted changes. A path the previous
 # lock listed and this revision no longer ships is deleted. The lock holds no date, so writing
 # the same revision twice changes nothing.
 #
@@ -66,14 +67,6 @@ installed_revision() {
   jq -r --arg root "$root" '[.plugins[]?[]? | select(.installPath == $root) | .gitCommitSha // empty] | first // empty' "$installed"
 }
 
-# pinned_revision <consumer>: the sha the consumer's project settings pin this plugin at.
-pinned_revision() {
-  local settings=$1/.claude/settings.json
-  [ -f "$settings" ] || return 0
-  jq -r --arg name "$PLUGIN" '[(.extraKnownMarketplaces // {})[] | (.source.plugins // [])[]
-    | select(.name == $name) | .source.sha // empty] | first // empty' "$settings"
-}
-
 # subset_paths <consumer>: the consumer paths .spoolway/types.subset names, in file order, with
 # whole-line comments and blank lines dropped. Prints nothing when the consumer has no subset.
 subset_paths() {
@@ -92,14 +85,9 @@ write() {
   git -C "$consumer" rev-parse --git-dir >/dev/null 2>&1 || die "$consumer is not a git checkout"
   command -v jq >/dev/null || die "jq is not installed"
 
-  local pin rev
-  pin=$(pinned_revision "$consumer")
-  [ -n "$pin" ] || die "$consumer/.claude/settings.json pins no $PLUGIN plugin by sha"
+  local rev
   rev=$(installed_revision)
-  [ -n "$rev" ] || die "this copy ($here) is not an installed $PLUGIN plugin, so its revision is unknown; run this from the installed plugin"
-  if [ "$rev" != "$pin" ]; then
-    die "this copy is revision ${rev:0:12} and $consumer pins ${pin:0:12}. Run \`claude plugin install $PLUGIN@$MARKETPLACE --scope project\` (or \`update\` where this checkout already has an install), restart Claude Code, and run this again"
-  fi
+  [ -n "$rev" ] || die "this copy ($here) is not an installed $PLUGIN plugin, so its revision is unknown; install it with \`claude plugin install $PLUGIN@$MARKETPLACE --scope user\`, restart Claude Code, and run this from the installed plugin"
 
   local full want subset missing note=""
   full=$(manifest)

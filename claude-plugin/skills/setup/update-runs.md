@@ -25,8 +25,8 @@ The checkout may lack the pipeline or the task template a run needs (`.spoolway/
 2. Place: `<draft>`, which is `./.scratch/<issue>-<slug>/`. A run with no issue yet uses `new` for `<issue>`; rename the folder when the issue exists. Open an issue only on the person's word.
 3. Id: no dots, and its branch is absent from origin: `setup.sh fresh-id <id>` prints `free` (it runs `git ls-remote --heads origin task/<id>`). Repeat that check immediately before any queue add, since a branch that outlives a merged pull request makes a release refuse the task.
 4. Check: `timeout 60 <dir>/bin/spoolway task contract --from <draft> < /dev/null`. A **before** task also passes it under the As-Is binary, so it can be queued today.
-5. Non-goals of every draft: installing a binary, a real `sync` by the lane, `spoolway dispatch reload`. A non-goal about a lock file or a baseline names what a legitimate tool writes there (for a companion pin, what `setup.sh bump` writes) as the exception.
-6. An **after** task sets `gate_at` to the step before the person's `sync`, so the person takes the sync in the task's worktree at the pause. A task that moves a plugin pin lists the plugin update in the worktree and the restart as a `to do:` of the same pause.
+5. Non-goals of every draft: installing a binary, a real `sync` by the lane, `spoolway dispatch reload`. A non-goal about a lock file or a baseline names what a legitimate tool writes there (for the companion's revision, what `setup.sh bump` writes) as the exception.
+6. An **after** task sets `gate_at` to the step before the person's `sync`, so the person takes the sync in the task's worktree at the pause. A task that moves the companion's revision lists the user-scope plugin update and the restart as a `to do:` of the same pause.
 
 ## Order
 
@@ -34,6 +34,6 @@ The checkout may lack the pipeline or the task template a run needs (`.spoolway/
 2. The person's steps (step 5 of the skill).
 3. **After** tasks.
 
-A checkout whose types come from the companion waits on the companion's own run: its pin moves with "A bump" once that run's pull request has merged, and its task is queued after the merge. `requires:` is a key spoolway passes through and does not enforce, so the order is kept by when you queue.
+A checkout whose types come from the companion waits on the companion's own run: its revision moves with "A bump" once that run's pull request has merged, and its task is queued after the merge. `requires:` is a key spoolway passes through and does not enforce, so the order is kept by when you queue.
 
 Before any queue add, report each project's active overrides (`override list`) and what they change. Queue with `timeout <n> spoolway queue add --from <draft> < /dev/null`, on the person's word for that folder.

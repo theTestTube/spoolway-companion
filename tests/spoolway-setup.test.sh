@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Drives claude-plugin/skills/setup/setup.sh against throwaway consumers: an empty mono-repo, a
-# multi-repo, a half-set-up consumer, one with another plugin's types, and a bump. `claude` is a
-# stub that writes install records into a throwaway CLAUDE_CONFIG_DIR; `gh` is a fake that answers
+# multi-repo, a half-set-up consumer, one with another plugin's types, one with an inline entry, and a
+# bump. `claude` is a stub that writes user-scope install records into a throwaway
+# CLAUDE_CONFIG_DIR, as the person's own install does; `gh` is a fake that answers
 # with the exact bytes the real one prints, and what it is asked to do is compared with cmp.
 # Usage: tests/spoolway-setup.test.sh (needs bash, git, jq, sha256sum)
 
@@ -35,30 +36,32 @@ export GH_LABELS="$work/labels"
 mkdir -p "$work/bin" "$CLAUDE_CONFIG_DIR/plugins" "$STUB_SOURCES"
 export PATH="$work/bin:$PATH"
 
-# claude plugin install|update <plugin>@<marketplace> --scope project, run in the consumer: copies
-# the pinned revision into the cache and records it for this project path, as Claude Code does.
-# STUB_STALE=1 makes `update` a no-op, the stale per-path record a marketplace at the pin leaves.
+# claude plugin install|update <plugin>@<marketplace> --scope user, and claude plugin marketplace
+# add|update: copies the revision STUB_REV names (default REV) into the cache and records it at user
+# scope, with no project path, as Claude Code does. Setup never calls it on `apply`: the install is
+# the person's, so the suite runs it as the person (`user_install`). `bump` calls update.
 cat > "$work/bin/claude" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 [ "$1" = plugin ] || exit 2
+echo "$*" >> "$CLAUDE_CONFIG_DIR/claude.log"
+if [ "$2" = marketplace ]; then exit 0; fi
 verb=$2 id=$3 name=${3%@*} market=${3#*@}
-echo "$verb $id $(pwd -P)" >> "$CLAUDE_CONFIG_DIR/claude.log"
-[ "$verb" = update ] && [ -n "${STUB_STALE:-}" ] && exit 0
-pin=$(jq -r --arg n "$name" '[.extraKnownMarketplaces[] | .source.plugins[]? | select(.name == $n) | .source.sha] | first' .claude/settings.json)
-dst=$CLAUDE_CONFIG_DIR/plugins/cache/$market/$name/$pin
+[ "$4" = --scope ] && [ "$5" = user ] || { echo "fake claude: only the user scope: $*" >&2; exit 2; }
+rev=${STUB_REV:-6d82bbc6b8dc4e68e243add65576aae977229766}
+dst=$CLAUDE_CONFIG_DIR/plugins/cache/$market/$name/$rev
 if [ ! -d "$dst" ]; then
   mkdir -p "$dst"
   if [ "$name" = spoolway-companion ]; then
-    src=$STUB_SOURCES/$pin; [ -d "$src" ] || src=$STUB_DEFAULT
+    src=$STUB_SOURCES/$rev; [ -d "$src" ] || src=$STUB_DEFAULT
     cp -a "$src/." "$dst/"
   fi
 fi
 f=$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json
 [ -f "$f" ] || echo '{"version":2,"plugins":{}}' > "$f"
-jq --arg id "$id" --arg p "$(pwd -P)" --arg i "$dst" --arg s "$pin" '
-  .plugins[$id] = ([(.plugins[$id] // [])[] | select(.projectPath != $p)]
-    + [{scope: "project", projectPath: $p, installPath: $i, version: "0", gitCommitSha: $s}])' "$f" > "$f.new"
+jq --arg id "$id" --arg i "$dst" --arg s "$rev" '
+  .plugins[$id] = ([(.plugins[$id] // [])[] | select(.scope != "user")]
+    + [{scope: "user", installPath: $i, version: "0", gitCommitSha: $s}])' "$f" > "$f.new"
 mv "$f.new" "$f"
 STUB
 
@@ -74,6 +77,8 @@ case "$1 $2" in
 esac
 STUB
 chmod +x "$work/bin/claude" "$work/bin/gh"
+# user_install <revision>: the person's own `claude plugin install ... --scope user`.
+user_install() { STUB_REV=$1 claude plugin install spoolway-companion@spoolway-companion --scope user > /dev/null; }
 
 # consumer <name>: a git repository with one commit and spoolway's own config.
 consumer() {
@@ -102,7 +107,6 @@ topology=mono
 pipelines=developing architecting
 issue_tracking=yes
 project_key=acme/widgets
-companion_sha=$REV
 RUN_REPORT_REPO=acme/widgets
 checks=bash tests/run.sh
 EOF
@@ -111,7 +115,7 @@ printf '%s\n' 'PAGES_COMPILE_PATTERN=## \[[0-9-]*\] compile | ' >> "$work/mono.a
 before=$(snapshot "$c")
 out=$(bash "$setup" plan "$work/mono.answers" "$c" 2>&1); status=$?
 check "plan writes nothing and stays on the branch" '[ $status -eq 0 ] && [ "$before" = "$(snapshot "$c")" ] && [ ! -e "$CLAUDE_CONFIG_DIR/claude.log" ]' "$out"
-check "plan names what apply would write" 'grep -q "would: wrote docs/agents/projects.md" <<<"$out" && grep -q "would: install spoolway-companion@spoolway-companion" <<<"$out"' "$out"
+check "plan names what apply would write, the pointer and the id included" 'grep -q "would: wrote docs/agents/projects.md" <<<"$out" && grep -q "would: added the spoolway-companion pointer (github theTestTube/spoolway-companion)" <<<"$out" && grep -q "would: enabled spoolway-companion@spoolway-companion" <<<"$out"' "$out"
 
 out=$(bash "$setup" apply "$work/mono.answers" "$c" 2>&1); status=$?
 check "apply passes" '[ $status -eq 0 ]' "$out"
@@ -128,9 +132,16 @@ check "types.subset takes the chosen pipelines and not the others" \
 check "the consumer scripts are written, executable, checks with the answered gate" \
   'for s in checks handover extra-worktree extra-handover extra-cleanup; do [ -x "$c/scripts/spoolway/$s.sh" ] || exit 1; done; sed -n "/# gates: begin/,/# gates: end/p" "$c/scripts/spoolway/checks.sh" | grep -qx "bash tests/run.sh"'
 check "no materializing script is written for a consumer that does not take it" '[ -z "$(ls "$c/scripts/spoolway" | grep materializing)" ]'
-check "settings pin the companion by sha and enable it" \
-  '[ "$(jq -r ".extraKnownMarketplaces[\"spoolway-companion\"].source.plugins[0].source.sha" "$c/.claude/settings.json")" = $REV ] && jq -e ".enabledPlugins[\"spoolway-companion@spoolway-companion\"]" "$c/.claude/settings.json" >/dev/null'
-check "the companion is installed for this project path" 'grep -qx "install spoolway-companion@spoolway-companion $c" "$CLAUDE_CONFIG_DIR/claude.log"'
+check "settings carry the github pointer and the id, and nothing else" \
+  '[ "$(jq -S . "$c/.claude/settings.json")" = "$(jq -S -n "{enabledPlugins: {\"spoolway-companion@spoolway-companion\": true}, extraKnownMarketplaces: {\"spoolway-companion\": {source: {source: \"github\", repo: \"theTestTube/spoolway-companion\"}}}}")" ] && ! grep -qE "\"(sha|ref|plugins)\"" "$c/.claude/settings.json"' "$(cat "$c/.claude/settings.json")"
+check "apply prints the user-scope install commands and never runs claude itself" \
+  'grep -q "to do: install spoolway-companion@spoolway-companion for the user" <<<"$out" && grep -qx "  claude plugin marketplace add theTestTube/spoolway-companion --scope user" <<<"$out" && grep -qx "  claude plugin install spoolway-companion@spoolway-companion --scope user" <<<"$out" && [ ! -e "$CLAUDE_CONFIG_DIR/claude.log" ]' "$out"
+check "without an install no types are taken and no lock is written" '[ ! -e "$c/.spoolway/plugin.lock" ]'
+settings_before=$(cat "$c/.claude/settings.json")
+user_install "$REV"
+out=$(bash "$setup" apply "$work/mono.answers" "$c" 2>&1); status=$?
+check "with the user's install, apply takes the types and leaves settings.json as it was" \
+  '[ $status -eq 0 ] && [ "$settings_before" = "$(cat "$c/.claude/settings.json")" ] && grep -q "kept the spoolway-companion@spoolway-companion install: user scope, at ${REV:0:12}" <<<"$out"' "$out"
 check "the types are taken through types.sh write, only the subset's paths" \
   'grep -qx "plugin spoolway-companion" "$c/.spoolway/plugin.lock" && grep -qx "revision $REV" "$c/.spoolway/plugin.lock" && [ "$(grep -cE "^[0-9]{6} " "$c/.spoolway/plugin.lock")" = "$(grep -vc "^#" "$c/.spoolway/types.subset")" ] && [ -f "$c/.spoolway/pipelines/developing.yml" ] && [ ! -e "$c/.spoolway/pipelines/feeding-back.yml" ]' "$out"
 check "a missing tracker doc is reported with the skill to run" 'grep -q "issue-tracker.md is missing; run /setup-matt-pocock-skills" <<<"$out" && grep -q "triage-labels.md is missing" <<<"$out"' "$out"
@@ -141,7 +152,7 @@ check "a second apply changes nothing" '[ $status -eq 0 ] && [ "$before" = "$(sn
 
 out=$(bash "$setup" detect "$c" 2>&1)
 check "detect reads back what apply wrote" \
-  'grep -qx "companion pin	$REV" <<<"$out" && grep -qx "old plugin	none" <<<"$out" && grep -qx "env FINDINGS_REPO	missing" <<<"$out" && grep -qx "file scripts/spoolway/checks.sh	present" <<<"$out"' "$out"
+  'grep -qx "companion pointer	github" <<<"$out" && grep -qx "companion enabled	yes" <<<"$out" && grep -qx "inline entries	none" <<<"$out" && grep -qx "companion install	$REV" <<<"$out" && grep -qx "old plugin	none" <<<"$out" && grep -qx "env FINDINGS_REPO	missing" <<<"$out" && grep -qx "file scripts/spoolway/checks.sh	present" <<<"$out"' "$out"
 
 # --- labels ---------------------------------------------------------------------------------
 
@@ -155,22 +166,33 @@ printf '%s\n' "spoolway:in-progress -R acme/widgets --color 1D76DB --description
   "spoolway:review -R acme/widgets --color 5319E7 --description spoolway: the bound task handed over a pull request" > "$work/gh.expected"
 check "labels --create creates only the missing ones, nothing else asked of gh" 'cmp -s "$GH_LOG" "$work/gh.expected"' "$(diff "$work/gh.expected" "$GH_LOG")"
 
-# --- the pin -------------------------------------------------------------------------------
+# --- the pointer and the id, only when missing --------------------------------------------
 
-c=$(consumer nopin)
-printf 'topology=mono\n' > "$work/nopin.answers"
-before=$(snapshot "$c")
-out=$(bash "$setup" apply "$work/nopin.answers" "$c" 2>&1); status=$?
-check "no pin and no installed copy: apply refuses and writes nothing" \
-  '[ $status -ne 0 ] && grep -q "no companion revision to pin" <<<"$out" && [ "$before" = "$(snapshot "$c")" ]' "$out"
-printf 'topology=mono\ncompanion_sha=main\n' > "$work/nopin.answers"
-out=$(bash "$setup" apply "$work/nopin.answers" "$c" 2>&1); status=$?
-check "a pin that is no full sha is refused, nothing written" '[ $status -ne 0 ] && [ "$before" = "$(snapshot "$c")" ]' "$out"
-own=$(jq -r --arg p "$work/mono" '.plugins["spoolway-companion@spoolway-companion"][] | select(.projectPath == $p) | .installPath' "$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json")
-printf 'topology=mono\n' > "$work/nopin.answers"
-out=$(bash "$own/skills/setup/setup.sh" apply "$work/nopin.answers" "$c" 2>&1); status=$?
-check "without companion_sha, the installed copy pins its own revision" \
-  '[ $status -eq 0 ] && [ "$(jq -r ".extraKnownMarketplaces[\"spoolway-companion\"].source.plugins[0].source.sha" "$c/.claude/settings.json")" = $REV ]' "$out"
+c=$(consumer pointer)
+mkdir -p "$c/.claude"
+printf '{"extraKnownMarketplaces": {"spoolway-companion": {"source": {"source": "github", "repo": "theTestTube/spoolway-companion"}}}}\n' > "$c/.claude/settings.json"
+printf 'topology=mono\n' > "$work/pointer.answers"
+out=$(bash "$setup" apply "$work/pointer.answers" "$c" 2>&1); status=$?
+check "a pointer that is there is kept, only the missing id is added" \
+  '[ $status -eq 0 ] && grep -q "kept .claude/settings.json marketplace spoolway-companion: present" <<<"$out" && [ "$(jq -c "{e: .enabledPlugins, m: .extraKnownMarketplaces}" "$c/.claude/settings.json")" = "{\"e\":{\"spoolway-companion@spoolway-companion\":true},\"m\":{\"spoolway-companion\":{\"source\":{\"source\":\"github\",\"repo\":\"theTestTube/spoolway-companion\"}}}}" ]' "$out"
+cp "$c/.claude/settings.json" "$work/pointer.settings"
+out=$(bash "$setup" apply "$work/pointer.answers" "$c" 2>&1)
+check "with both there, settings.json is byte-identical" 'cmp -s "$c/.claude/settings.json" "$work/pointer.settings"' "$out"
+
+# --- an inline entry is reported and never touched --------------------------------------------
+
+c=$(consumer inline)
+mkdir -p "$c/.claude"
+printf '{\n    "enabledPlugins" : {"spoolway-companion@spoolway-companion" : true},\n    "extraKnownMarketplaces" : {"spoolway-companion" : {"source" : {"source" : "settings", "name" : "spoolway-companion", "plugins" : [{"name" : "spoolway-companion", "source" : {"source" : "git-subdir", "url" : "https://github.com/theTestTube/spoolway-companion.git", "path" : "claude-plugin", "sha" : "%s"}}]}}}\n}\n' "$NEW" > "$c/.claude/settings.json"
+commit_all "$c" inline
+cp "$c/.claude/settings.json" "$work/inline.settings"
+out=$(bash "$setup" detect "$c" 2>&1)
+check "detect names the inline entry" 'grep -qx "companion pointer	settings" <<<"$out" && grep -qx "inline entries	spoolway-companion" <<<"$out"' "$out"
+printf 'topology=mono\n' > "$work/inline.answers"
+out=$(bash "$setup" apply "$work/inline.answers" "$c" 2>&1); status=$?
+check "an inline entry is reported, with what to do by hand" \
+  '[ $status -eq 0 ] && grep -q "to do: .claude/settings.json declares spoolway-companion as an inline marketplace" <<<"$out" && grep -q "to do: .claude/settings.json holds an inline marketplace spoolway-companion for the companion" <<<"$out"' "$out"
+check "...and settings.json is byte-identical" 'cmp -s "$c/.claude/settings.json" "$work/inline.settings"'
 
 # --- 2. a multi-repo ------------------------------------------------------------------------
 
@@ -181,7 +203,6 @@ extra_repos=acme/api acme/infra
 worktree_root=../worktrees
 repos_rule=Name every repository the change touches, this one first.
 issue_tracking=no
-companion_sha=$REV
 MATERIALIZING_REPO=acme/specs
 EOF
 out=$(bash "$setup" apply "$work/multi.answers" "$c" 2>&1); status=$?
@@ -199,7 +220,7 @@ for s in bind backing drafts gates handover; do
   { cmp -s "$c/$f" "$templates/$f" && [ -x "$c/$f" ] && grep -q "Written once by /spoolway-companion:setup" "$c/$f" && ! grep -q "to do: write $f" <<<"$out"; } || materializing_copied=
 done
 check "multi: the five materializing-* scripts are the templates, byte for byte, executable, and not named to do" '[ -n "$materializing_copied" ]' "$out"
-printf 'topology=multi\ncompanion_sha=%s\n' "$REV" > "$work/multi-bare.answers"
+printf 'topology=multi\n' > "$work/multi-bare.answers"
 out=$(bash "$setup" apply "$work/multi-bare.answers" "$(consumer multi-bare)" 2>&1)
 check "multi: without extra_repos or worktree_root, both keys are named to do" \
   'grep -q "to do: topology is multi and extra_repos is empty" <<<"$out" && grep -q "to do: topology is multi and worktree_root is empty" <<<"$out"' "$out"
@@ -222,7 +243,6 @@ topology=mono
 pipelines=developing
 issue_tracking=yes
 project_key=acme/half
-companion_sha=$REV
 RUN_REPORT_REPO=acme/new
 FINDINGS_REPO=acme/findings
 EOF
@@ -235,7 +255,7 @@ check "half: config.toml keeps the hook it has and gains project_key under the s
   'grep -qx "hook = \"other.sh\"" "$c/.spoolway/config.toml" && ! grep -q "github.sh" "$c/.spoolway/config.toml" && [ "$(sed -n "/^\[issue_tracking\]/,\$p" "$c/.spoolway/config.toml" | grep -c "project_key = \"acme/half\"")" = 1 ] && grep -q "it is \"other.sh\"" <<<"$out"' "$(cat "$c/.spoolway/config.toml")"
 check "half: an existing types.subset is kept" 'cmp -s "$c/.spoolway/types.subset" "$work/half.before/.spoolway/types.subset" && grep -q "kept .spoolway/types.subset: present" <<<"$out"' "$out"
 check "half: the other plugin's entry is unchanged and the companion's is added beside it" \
-  '[ "$(jq -S ".extraKnownMarketplaces.tools" "$c/.claude/settings.json")" = "$(jq -S ".extraKnownMarketplaces.tools" "$work/half.before/.claude/settings.json")" ] && [ -n "$(jq -r ".extraKnownMarketplaces[\"spoolway-companion\"].source.plugins[0].source.sha" "$c/.claude/settings.json")" ]'
+  '[ "$(jq -S ".extraKnownMarketplaces.tools" "$c/.claude/settings.json")" = "$(jq -S ".extraKnownMarketplaces.tools" "$work/half.before/.claude/settings.json")" ] && [ "$(jq -r ".extraKnownMarketplaces[\"spoolway-companion\"].source.repo" "$c/.claude/settings.json")" = theTestTube/spoolway-companion ]'
 
 # --- 4. a consumer whose types another plugin owns -------------------------------------------
 
@@ -250,7 +270,6 @@ cp -a "$c" "$work/legacy.before"
 cat > "$work/legacy.answers" <<EOF
 topology=mono
 pipelines=developing
-companion_sha=$REV
 EOF
 out=$(bash "$setup" detect "$c" 2>&1)
 check "legacy: detect names the other plugin" 'grep -qx "old plugin	legacy-harness" <<<"$out"' "$out"
@@ -258,8 +277,8 @@ out=$(bash "$setup" apply "$work/legacy.answers" "$c" 2>&1); status=$?
 check "legacy: apply passes and reports the other plugin" '[ $status -eq 0 ] && grep -q "found the legacy-harness plugin" <<<"$out"' "$out"
 check "legacy: its lock, its gate and its pipeline are untouched" \
   'cmp -s "$c/.spoolway/plugin.lock" "$work/legacy.before/.spoolway/plugin.lock" && cmp -s "$c/scripts/gates/lock.sh" "$work/legacy.before/scripts/gates/lock.sh" && cmp -s "$c/.spoolway/pipelines/developing.yml" "$work/legacy.before/.spoolway/pipelines/developing.yml" && [ ! -e "$c/.spoolway/types.subset" ]'
-check "legacy: its settings entry is unchanged, the companion is added and installed beside it" \
-  '[ "$(jq -S "{t: .extraKnownMarketplaces.tools, e: .enabledPlugins[\"legacy-harness@tools\"]}" "$c/.claude/settings.json")" = "$(jq -S "{t: .extraKnownMarketplaces.tools, e: .enabledPlugins[\"legacy-harness@tools\"]}" "$work/legacy.before/.claude/settings.json")" ] && grep -qx "install spoolway-companion@spoolway-companion $c" "$CLAUDE_CONFIG_DIR/claude.log"'
+check "legacy: its settings entry is unchanged and the companion's pointer and id are added beside it" \
+  '[ "$(jq -S "{t: .extraKnownMarketplaces.tools, e: .enabledPlugins[\"legacy-harness@tools\"]}" "$c/.claude/settings.json")" = "$(jq -S "{t: .extraKnownMarketplaces.tools, e: .enabledPlugins[\"legacy-harness@tools\"]}" "$work/legacy.before/.claude/settings.json")" ] && jq -e ".enabledPlugins[\"spoolway-companion@spoolway-companion\"] and .extraKnownMarketplaces[\"spoolway-companion\"].source.source == \"github\"" "$c/.claude/settings.json" > /dev/null'
 
 # --- 5. a bump ------------------------------------------------------------------------------
 
@@ -276,11 +295,15 @@ printf '# a line the new revision adds\n' >> "$STUB_SOURCES/$NEW/templates/setup
 printf '# a line the new revision adds to drafts\n' >> "$STUB_SOURCES/$NEW/templates/scripts/spoolway/materializing-drafts.sh"
 cp "$c/.spoolway/hooks/github.sh" "$work/github.sh.before"
 
+cp "$c/.claude/settings.json" "$work/settings.before"
 out=$(bash "$setup" bump "$NEW" "$c" 2>&1); status=$?
+check "bump takes no sha: a revision is the installed copy's, never an argument" '[ $status -eq 64 ]' "$out"
+: > "$CLAUDE_CONFIG_DIR/claude.log"
+out=$(STUB_REV=$NEW bash "$setup" bump "$c" 2>&1); status=$?
 check "bump passes" '[ $status -eq 0 ]' "$out"
-check "bump moves only the companion's sha, in place" \
-  '[ "$(wc -l < "$c/.claude/settings.json")" -gt 10 ] && grep -q "$NEW" "$c/.claude/settings.json" && cmp -s <(sed "s/$NEW/$REV/" "$c/.claude/settings.json") <(git -C "$c" show HEAD:.claude/settings.json)' "$(git -C "$c" diff -- .claude/settings.json)"
-check "bump updates the install for this project path" 'grep -qx "update spoolway-companion@spoolway-companion $c" "$CLAUDE_CONFIG_DIR/claude.log"'
+check "bump leaves settings.json byte-identical, as a person formatted it" 'cmp -s "$c/.claude/settings.json" "$work/settings.before" && [ -z "$(git -C "$c" diff -- .claude/settings.json)" ]' "$(git -C "$c" diff -- .claude/settings.json)"
+check "bump updates the marketplace and the plugin, at user scope" \
+  'grep -qx "plugin marketplace update spoolway-companion" "$CLAUDE_CONFIG_DIR/claude.log" && grep -qx "plugin update spoolway-companion@spoolway-companion --scope user" "$CLAUDE_CONFIG_DIR/claude.log" && ! grep -q -- "--scope project" "$CLAUDE_CONFIG_DIR/claude.log"' "$(cat "$CLAUDE_CONFIG_DIR/claude.log")"
 check "bump retakes the types and the lock" 'grep -qx "revision $NEW" "$c/.spoolway/plugin.lock"' "$out"
 check "bump writes back a missing consumer script" '[ -x "$c/scripts/spoolway/handover.sh" ]' "$out"
 check "bump prints the template's change and leaves the consumer's copy alone" \
@@ -291,10 +314,17 @@ check "bump works on its own branch and commits nothing" '[ "$(git -C "$c" rev-p
 
 commit_all "$c" "bumped"
 lock_before=$(cat "$c/.spoolway/plugin.lock")
+out=$(STUB_REV=$NEW bash "$setup" bump "$c" 2>&1); status=$?
+check "a bump with nothing new keeps the lock, the types and settings.json" \
+  '[ $status -eq 0 ] && grep -q "kept the types: .spoolway/plugin.lock is at ${NEW:0:12}" <<<"$out" && [ "$lock_before" = "$(cat "$c/.spoolway/plugin.lock")" ] && cmp -s "$c/.claude/settings.json" "$work/settings.before"' "$out"
 cp -a "$repo/claude-plugin" "$STUB_SOURCES/$NEWER"
-out=$(STUB_STALE=1 bash "$setup" bump "$NEWER" "$c" 2>&1); status=$?
-check "a stale per-path record is reported and the types are not retaken" \
-  '[ $status -eq 0 ] && grep -q "after update, the pin is ${NEWER:0:12}" <<<"$out" && [ "$lock_before" = "$(cat "$c/.spoolway/plugin.lock")" ]' "$out"
+out=$(STUB_REV=$NEWER bash "$setup" bump "$c" 2>&1); status=$?
+check "a later revision moves the lock and still not settings.json" \
+  '[ $status -eq 0 ] && grep -qx "revision $NEWER" "$c/.spoolway/plugin.lock" && cmp -s "$c/.claude/settings.json" "$work/settings.before"' "$out"
+
+c2=$(consumer nolockbump)
+out=$(bash "$setup" bump "$c2" 2>&1); status=$?
+check "bump on a consumer with no lock says to run setup first" '[ $status -ne 0 ] && grep -q "run setup first" <<<"$out"' "$out"
 
 # --- 7. memex: the machine's config and index timer -----------------------------------------
 # `memex` and `systemctl` are stubs and HOME is a throwaway one: nothing here touches the real
@@ -398,7 +428,7 @@ out=$(msetup "$(mhome nocache)" apply "$work/memex-boot.answers")
 check "a user manager without FASTEMBED_CACHE_DIR is named to do" 'grep -q "to do: FASTEMBED_CACHE_DIR is not in the systemd user environment" <<<"$out"' "$out"
 
 c=$(consumer withmemex)
-printf 'topology=mono\ncompanion_sha=%s\nmemex_schedule=boot\nmemex_auto_index_on_search=false\n' "$REV" > "$work/withmemex.answers"
+printf 'topology=mono\nmemex_schedule=boot\nmemex_auto_index_on_search=false\n' > "$work/withmemex.answers"
 out=$(bash "$setup" apply "$work/withmemex.answers" "$c" 2>&1)
 check "the consumer apply ignores the memex keys: none reaches companion.env, none is written for the machine" \
   '! grep -qi memex "$c/.spoolway/companion.env" 2>/dev/null && [ ! -e "$HOME/.memex/config.toml" ] && [ ! -e "$HOME/.config/systemd" ]' "$out"
