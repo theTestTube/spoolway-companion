@@ -26,7 +26,7 @@ Reached from "A spoolway update". Each line was observed on an earlier gap and n
 
 - **A merged pull request can leave its `task/<id>` branch on origin.** A release can refuse a task whose branch origin still holds. Take a fresh id and `setup.sh fresh-id <id>` right before the queue add.
 - **`requires:` is not enforced.** It reaches the pull request as a note. Queue the dependent task after what it waits on has merged.
-- **A pin bump leaves the plugin installed in a task's worktree behind the pin.** The pin-drift hook then denies writes to the protected path until `claude plugin update` runs and Claude Code restarts. Put both in the task's pause as the person's steps.
+- **A retake leaves the installed plugin behind the lock, or the lock behind the install.** The user-scope install is shared by every worktree, so the pin-drift hook denies writes to the protected path in each of them until `claude plugin update spoolway-companion@spoolway-companion --scope user` runs and Claude Code restarts (or the types are retaken at the installed revision). Put both in the task's pause as the person's steps.
 - **A draft's criteria can name a file git ignores.** Run `git check-ignore -v <path>` before a criterion lists it, or the review asks where the file went.
 
 ## After the install

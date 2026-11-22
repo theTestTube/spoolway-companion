@@ -3,7 +3,7 @@
 Pipeline types, hooks and skills for running coding agents through
 [spoolway](https://github.com/marvingygas/spoolway): the Developing, Materializing, Architecting
 and Feeding-back pipelines with their prompts, task templates and shared step scripts, a Claude Code
-plugin that writes them into a repository and keeps them pinned, and a repair skill for a task
+plugin that writes them into a repository and records the revision it took, and a repair skill for a task
 that got stuck.
 
 The companion knows nothing of any one project. A repository that consumes it fills in what is
@@ -23,63 +23,69 @@ The project's vocabulary is in [GLOSSARY.md](GLOSSARY.md).
   - `skills/spoolway-repair/` (`/spoolway-companion:spoolway-repair <task-id>`) repairs a stuck task.
   - `skills/gh-report/` (`/spoolway-companion:gh-report owner/repo ...`) writes one HTML page of issue
     line charts (created and open, 2 weeks and 3 months) for a list of repositories, read-only.
-  - `hooks/pin-drift` warns when the installed plugin is not the commit the consumer pins.
+  - `hooks/pin-drift` warns when the installed plugin is not the revision the consumer's
+    `.spoolway/plugin.lock` records.
   - `spoolway/types/` is the one definition of the pipeline types.
   - `templates/` holds files a consumer copies once and owns from then on, laid out like the
-    consumer with `setup/` for `.spoolway/` and `github/` for `.github/`: the `github.sh`
+    consumer with `setup/` for `.spoolway/`, `github/` for `.github/` and `claude/` for `.claude/`: the `github.sh`
     issue-tracking hook, the `spoolway-issues.yml` workflow that closes a task's issue when its
-    pull request merges, and the `checks`, `handover` and `extra-*` consumer scripts.
+    pull request merges, the `checks`, `handover` and `extra-*` consumer scripts, and the
+    `missing-plugin.sh` SessionStart hook (see Install).
     `/spoolway-companion:setup` copies them; nothing ever updates a copy.
 - `tests/` holds the tests. They are outside `claude-plugin/`, so they are not installed.
 - `.spoolway/`, `scripts/` and `.github/` make this repository a consumer of its own types.
 
 ## Install
 
-A consumer declares an inline marketplace named `spoolway-companion` in its
-`.claude/settings.json`, pinned by `sha`:
+The repository publishes one catalogue, `.claude-plugin/marketplace.json`, named
+`spoolway-companion`, with one plugin, `spoolway-companion`. A consumer keeps no plugin list and no
+pin: its `.claude/settings.json` holds only the github pointer to the catalogue and the id to
+enable, and the revision it took is the one `.spoolway/plugin.lock` records.
 
 ```json
 {
   "enabledPlugins": { "spoolway-companion@spoolway-companion": true },
   "extraKnownMarketplaces": {
     "spoolway-companion": {
-      "source": {
-        "source": "settings",
-        "name": "spoolway-companion",
-        "plugins": [
-          {
-            "name": "spoolway-companion",
-            "source": {
-              "source": "git-subdir",
-              "url": "https://github.com/theTestTube/spoolway-companion.git",
-              "path": "claude-plugin",
-              "sha": "<commit>"
-            }
-          }
-        ]
-      }
+      "source": { "source": "github", "repo": "theTestTube/spoolway-companion" }
     }
   }
 }
 ```
 
-Then, once per checkout:
+The install is the person's, once per machine, at user scope, so every checkout and worktree of
+the machine shares one copy:
 
 ```bash
-claude plugin install spoolway-companion@spoolway-companion --scope project
+claude plugin marketplace add theTestTube/spoolway-companion --scope user
+claude plugin install spoolway-companion@spoolway-companion --scope user
 ```
 
-After every pin bump: `claude plugin update spoolway-companion@spoolway-companion --scope project`,
-restart Claude Code, then run `/spoolway-companion:spoolway-types`.
+Then enable it per project (the `enabledPlugins` line above), restart Claude Code, and run
+`/spoolway-companion:spoolway-types`, which writes the types at the installed revision and records
+that revision in `.spoolway/plugin.lock`.
 
-`/spoolway-companion:setup` does all of this for a person: on a first install it interviews them
-and writes the entry, the install, the types and the consumer files below; on a bump it moves the
-pin and does the rest (see Skills).
+The companion's revision is every merge to `main`. To move a consumer to a newer one, update the
+catalogue and the plugin, restart Claude Code, and retake the types:
 
-This repository also publishes `.claude-plugin/marketplace.json`, named
-`spoolway-companion-catalog`, for those who follow a `ref` instead of a pin. Its name differs from
-the inline marketplace on purpose: a repository marketplace may not share its name with an inline
-one that has another source.
+```bash
+claude plugin marketplace update spoolway-companion
+claude plugin update spoolway-companion@spoolway-companion --scope user
+```
+
+`/spoolway-companion:setup` does the consumer's side for a person: on a first install it interviews
+them and writes the pointer, the id, the types and the consumer files below, and prints the two
+install commands; `bump` runs the two update commands, retakes the types and never edits
+`.claude/settings.json` (see Skills). An inline `spoolway-companion` marketplace of an older
+consumer (`source: settings`, with a plugin list and a `sha`) is reported and left as it is: it
+collides with the catalogue's name, so the consumer replaces it by the pointer by hand.
+
+A plugin that is not installed cannot ship the hook that says so, so a consumer owns that hook:
+`claude-plugin/templates/claude/hooks/missing-plugin.sh` is copied to
+`.claude/hooks/missing-plugin.sh` and registered as a SessionStart hook in `.claude/settings.json`
+(the snippet is in the file's header). When a plugin the project enables is not installed, it tells
+the person the `claude plugin marketplace add` and `claude plugin install … --scope user` commands.
+It writes nothing and never blocks the session. Its test is `tests/spoolway-missing-plugin.test.sh`.
 
 ## Extension points
 
@@ -99,6 +105,7 @@ each, the three-tier rule behind them and how `companion.env` is read are in
 | `.spoolway/companion.env` | `KEY=value` lines read by the shipped scripts (below); an environment variable that is set and not empty wins | each key's own, in the table below |
 | `docs/agents/projects.md` | the projects, the rule for `repos`, and any private feedback repository | the project is the repository itself |
 | `.spoolway/hooks/github.sh` | the issue-tracking hook, copied from `claude-plugin/templates/` | tasks still run; no `spoolway:*` labels, no close on merge, no issue reads |
+| `.claude/hooks/missing-plugin.sh` | the SessionStart hook that names a required plugin that is not installed, copied from `claude-plugin/templates/claude/hooks/` and registered in `.claude/settings.json` | nothing says a plugin is missing: the session just lacks it |
 
 `companion.env` keys:
 
@@ -108,7 +115,7 @@ each, the three-tier rule behind them and how `companion.env` is read are in
 | `PAGES_GATE` | `pins.sh` | the command that names stale pages (default `scripts/gates/run.sh stale-pages`) |
 | `PAGES_LOG`, `PAGES_COMPILE_PATTERN` | `pins.sh` | the log a page compile writes, and the pattern of its entry; no log means no check that a page was compiled, not edited by hand |
 | `PAGES_COMMIT_PREFIX` | `pins.sh` | the subject prefix of the pin commit |
-| `PIN_DRIFT_PROTECTED` | `hooks/pin-drift` | the path writes are denied under while the install drifts; unset means no denial |
+| `PIN_DRIFT_PROTECTED` | `hooks/pin-drift` | the path writes are denied under while the install differs from the lock; unset means no denial |
 | `RUN_REPORT_REPO` | `run-report.sh` | where run reports are filed; unset means the run's own repository |
 | `FINDINGS_REPO` | `findings.sh` | where the weekly digest lives; unset means the run's own repository |
 | `MATERIALIZING_REPO` | `/spoolway-companion:setup` only | the repository of Materializing's specs; the prompts read it from `docs/agents/projects.md`, where setup writes it too |
@@ -117,16 +124,18 @@ each, the three-tier rule behind them and how `companion.env` is read are in
 
 ## Hooks
 
-`claude-plugin/hooks/pin-drift` compares every `sha`-pinned entry in the project's inline
-marketplaces with the installed commit (`gitCommitSha` in
-`$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json`). When that record is absent or lacks
-`gitCommitSha`, it falls back to the version in `claude plugin list --json`. A version-less plugin
-reports `<sha12>[-suffix]`, which is compared with the pin; any other version is compared with the
-declared `ref`. If neither source can decide, the hook says so.
+`claude-plugin/hooks/pin-drift` compares the installed commit of `spoolway-companion`
+(`gitCommitSha` of its user-scope record in `$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json`)
+with the `revision` in the project's `.spoolway/plugin.lock`. It reads nothing from
+`.claude/settings.json`. When the record is absent or lacks `gitCommitSha`, it falls back to the
+version in `claude plugin list --json`, which for a version-less plugin reports `<sha12>[-suffix]`.
+If neither source can decide, the hook says so. A project with no lock, or a lock of another
+plugin, has nothing to compare and the hook stays silent.
 
-- **SessionStart** (startup, resume, clear, compact): on drift, it prints the exact
-  `claude plugin update … --scope project` command, and, when `PIN_DRIFT_PROTECTED` names a path,
-  tells the agent not to write there.
+- **SessionStart** (startup, resume, clear, compact): on drift, it prints the user-scope
+  `claude plugin marketplace update` and `claude plugin update … --scope user` commands, or
+  `/spoolway-companion:setup bump` when the install is the newer one, and, when
+  `PIN_DRIFT_PROTECTED` names a path, tells the agent not to write there.
 - **PreToolUse** (`Write`, `Edit`): denies writes under `PIN_DRIFT_PROTECTED` while drift persists.
   `SPOOLWAY_COMPANION_WIKI_PIN_DRIFT_BLOCK=false` in the environment Claude Code starts in (not a
   `companion.env` key) turns the deny into a warning that names the drift and the commands; any
@@ -134,11 +143,12 @@ declared `ref`. If neither source can decide, the hook says so.
   It recomputes drift on each call, so the gate lifts once the install matches.
 
 The hook never blocks the session. It cannot report its own missing install, because no hook runs
-until the plugin is installed. Run the tests with `tests/pin-drift.test.sh` (needs `bash` and `jq`).
+until the plugin is installed: that is the consumer-owned `missing-plugin.sh` hook of Install. Run
+the tests with `tests/pin-drift.test.sh` (needs `bash` and `jq`).
 
 ## Skills
 
-**`/spoolway-companion:setup [<companion-sha> | spoolway [<version>]]`**, which only a person can start, sets a consumer up. Detection runs
+**`/spoolway-companion:setup [bump | spoolway [<version>]]`**, which only a person can start, sets a consumer up. Detection runs
 first and every question the disk answers is skipped; the interview then goes topology, pipelines,
 issue tracking, destinations, wiki, then the `checks` and `handover` commands, and ends with a
 summary the person confirms. It never overwrites a consumer file: in an existing
@@ -146,9 +156,11 @@ summary the person confirms. It never overwrites a consumer file: in an existing
 keys or entries, and reports a differing value. It never writes a path `plugin.lock` lists but
 through `types.sh write`, and leaves everything uncommitted on a branch. A consumer whose types
 another plugin owns is reported, and the companion goes in beside it without touching that
-plugin, its entry, its lock or its gate. Given a new revision, it moves only the `sha` of the
-companion's own entry, installs or updates per project path, retakes the types, adds what is
-missing and prints a diff for every copied template that changed. Given `spoolway` or a release
+plugin, its entry, its lock or its gate. It adds to a new consumer's settings only the github
+pointer to the catalogue and the `enabledPlugins` id, when missing, and prints the user-scope
+install commands; an inline entry is reported and left as it is. Given `bump`, it updates the
+catalogue and the plugin at user scope, retakes the types, adds what is missing and prints a diff
+for every copied template that changed, and it never edits `.claude/settings.json`. Given `spoolway` or a release
 number instead, it changes no file of the checkout: it reads the gap between the installed spoolway and the latest
 release (or the one named, forward or back), probes that release's binary against the checkout
 without installing it, maps the breaking changes onto the checkout's files, and drafts the runs
@@ -202,7 +214,7 @@ on two synthetic tasks written as the Developing task template writes them
 ## Pipeline types
 
 spoolway reads only the checkout, so each consuming repository carries a tracked copy of the
-types, written by the plugin at the revision it pins:
+types, written by the plugin at the revision it records in `.spoolway/plugin.lock`:
 
 - `claude-plugin/spoolway/types/` mirrors the consumer path for path, except that `setup/` is the
   consumer's `.spoolway/`: a nested `.spoolway/` would be refused once this repository is a
@@ -210,9 +222,9 @@ types, written by the plugin at the revision it pins:
   `git ls-tree` does; regenerate it with
   `bash claude-plugin/spoolway/types.sh manifest > claude-plugin/spoolway/types.manifest`.
 - **`/spoolway-companion:spoolway-types`**, started by a person in the consumer's checkout, runs
-  `types.sh write`. It refuses unless the installed copy it runs from is the revision the
-  consumer's `.claude/settings.json` pins, so a pin bump needs the install updated and Claude Code
-  restarted first. It writes every path, deletes the ones the previous lock listed and this
+  `types.sh write`. It takes the revision from the install record of the copy it runs from and
+  reads nothing from `.claude/settings.json`, so a newer revision needs the install updated and
+  Claude Code restarted first. It writes every path, deletes the ones the previous lock listed and this
   revision dropped, and records the revision and each path's hash in `.spoolway/plugin.lock`.
   The lock carries no date: the same revision written twice changes nothing.
 - **A consumer that runs only some of the types** declares them in `.spoolway/types.subset`, one
@@ -235,11 +247,11 @@ Run the tests with `tests/spoolway-types.test.sh` (needs `bash`, `git`, `jq` and
 - **The take is a subset.** `.spoolway/types.subset` names the three pipelines this repository
   dispatches (developing, developing-sonnet-review and materializing), with their prompts and task
   templates and the shared scripts.
-- **The pin names an earlier commit.** A lock cannot name the commit that contains it, so
-  `.spoolway/plugin.lock` names a commit already on `main`, the one `.claude/settings.json` pins. A
-  change to `claude-plugin/spoolway/types/` therefore lands in two steps: that pull request, then a
-  pin bump (the new `main`, the install updated, a restart, `/spoolway-companion:spoolway-types`)
-  in the next.
+- **The lock names an earlier commit.** A lock cannot name the commit that contains it, so
+  `.spoolway/plugin.lock` names a commit already on `main`, the one the install was at when the
+  types were taken. A change to `claude-plugin/spoolway/types/` therefore lands in two steps: that
+  pull request, then a retake (the new `main`, the install updated at user scope, a restart,
+  `/spoolway-companion:spoolway-types`) in the next.
 - **What stays this repository's own:** `checks.sh` (`tests/*.test.sh` and
   `spoolway pipeline check`), `handover.sh`, the three `extra-*.sh` (this repository has no extra
   repository, so they pass at once and block a task whose `repos` names more than one), and
@@ -253,7 +265,7 @@ Run the tests with `tests/spoolway-types.test.sh` (needs `bash`, `git`, `jq` and
 The `feeding-back` pipeline turns the week's run reports and findings into triage issues. Its
 `rotate` step (`scripts/spoolway/feeding-back.sh rotate`, a command with no model, shipped from
 `claude-plugin/spoolway/types/scripts/spoolway/` like `collect.sh`: this repository's copy comes
-back from `types.sh write` at the next pin bump, so none is checked in until then) runs after
+back from `types.sh write` at the next retake, so none is checked in until then) runs after
 `counts`: it opens the next "Weekly digest <ISO week>" issue in the project's repository unless a digest
 other than the processed one is open, then closes the processed one (the issue the task is bound
 to by `ticket:`). Each project therefore has one digest open, no lane opens or closes one, and a

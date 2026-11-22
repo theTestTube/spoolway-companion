@@ -2,7 +2,7 @@
 
 The pipelines run without an issue tracker. What the companion adds for GitHub issues is one
 spoolway hook and one workflow, both templates a consumer copies once and then owns: the companion
-never updates either, and a pin bump never touches them.
+never updates either, and a bump never touches them.
 
 - `claude-plugin/templates/setup/hooks/github.sh` → `.spoolway/hooks/github.sh`
 - `claude-plugin/templates/github/workflows/spoolway-issues.yml` → `.github/workflows/spoolway-issues.yml`

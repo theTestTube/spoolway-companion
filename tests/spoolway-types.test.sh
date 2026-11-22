@@ -58,19 +58,21 @@ make_plugin() {
 }
 installed() { # installed <gitCommitSha of the fixture install>
   jq -n --arg p "$plugin" --arg sha "$1" '{version: 2, plugins: {"spoolway-companion@spoolway-companion": [
-    {scope: "project", projectPath: "/elsewhere", installPath: $p, version: "6d82bbc6b8dc-afc78acc", gitCommitSha: $sha}]}}' \
+    {scope: "user", installPath: $p, version: "6d82bbc6b8dc-afc78acc", gitCommitSha: $sha}]}}' \
     > "$config/plugins/installed_plugins.json"
 }
 
-# A consumer checkout pinning the plugin at <sha>, with files of its own beside the setup.
-consumer() { # consumer <name> <pinned sha>
+# A consumer checkout with files of its own beside the setup. Its settings carry the github
+# pointer and the id only: types.sh reads no revision from them, and a sha it never reads sits in
+# an inline entry of another marketplace to prove it.
+consumer() { # consumer <name> [<sha an inline entry names, which write must ignore>]
   c="$work/$1"
   rm -rf "$c"
   mkdir -p "$c/.claude" "$c/.spoolway" "$c/scripts/spoolway"
   git -C "$c" init -q -b develop
-  jq -n --arg sha "$2" '{extraKnownMarketplaces: {"spoolway-companion": {source: {source: "settings", name: "spoolway-companion", plugins: [
-    {name: "other", source: {source: "git-subdir", url: "https://example.com/other.git", path: "claude-plugin", sha: "7c94c9bf2968f17deb496b285db0afdb610a01d9"}},
-    {name: "spoolway-companion", source: {source: "git-subdir", url: "https://github.com/theTestTube/spoolway-companion.git", path: "claude-plugin", sha: $sha}}]}}}}' \
+  jq -n --arg sha "${2:-$OTHER}" '{enabledPlugins: {"spoolway-companion@spoolway-companion": true},
+    extraKnownMarketplaces: {"spoolway-companion": {source: {source: "github", repo: "theTestTube/spoolway-companion"}},
+      stale: {source: {source: "settings", name: "stale", plugins: [{name: "spoolway-companion", source: {source: "git-subdir", url: "https://example.com/x.git", path: "claude-plugin", sha: $sha}}]}}}}' \
     > "$c/.claude/settings.json"
   printf '[dispatch]\nbackend = "herdr"\n' > "$c/.spoolway/config.toml"
   printf '#!/usr/bin/env bash\necho %s checks\n' "$1" > "$c/scripts/spoolway/checks.sh"
@@ -89,21 +91,20 @@ make_plugin
 consumer app "$REV"
 
 jq 'del(.extraKnownMarketplaces)' "$c/.claude/settings.json" > "$work/s.json" && mv "$work/s.json" "$c/.claude/settings.json"
-commit "$c" unpin
+commit "$c" "no settings entry"
 run "$c"
-check "refuses a consumer that pins no spoolway-companion sha" '[ $status -ne 0 ] && grep -q "pins no spoolway-companion" <<<"$out"' "$out"
-check "...and writes nothing" '[ ! -e "$c/.spoolway/plugin.lock" ] && [ -z "$(git -C "$c" status --porcelain)" ]'
+check "settings.json is not read: a consumer with no marketplace entry at all is written" '[ $status -eq 0 ] && grep -qx "revision $REV" "$c/.spoolway/plugin.lock"' "$out"
 
 consumer app "$OTHER"
 run "$c"
-check "refuses when the consumer pins another revision than this copy's" \
-  '[ $status -ne 0 ] && grep -q "is revision 6d82bbc6b8dc and .* pins 111111111111" <<<"$out" && grep -q "claude plugin install spoolway-companion@spoolway-companion --scope project" <<<"$out"' "$out"
-check "...and writes nothing" '[ -z "$(git -C "$c" status --porcelain)" ]'
+check "the revision is the install's, whatever sha an inline entry of the settings names" \
+  '[ $status -eq 0 ] && grep -qx "revision $REV" "$c/.spoolway/plugin.lock" && ! grep -q "$OTHER" "$c/.spoolway/plugin.lock"' "$out"
+check "...and settings.json is left as it was" '[ -z "$(git -C "$c" status --porcelain -- .claude)" ]'
 
 consumer app "$REV"
 mv "$config/plugins/installed_plugins.json" "$work/installed.bak"
 run "$c"
-check "refuses a copy with no install record (revision unknown)" '[ $status -ne 0 ] && grep -q "revision is unknown" <<<"$out"' "$out"
+check "refuses a copy with no install record (revision unknown), naming the user-scope install" '[ $status -ne 0 ] && grep -q "revision is unknown" <<<"$out" && grep -q "claude plugin install spoolway-companion@spoolway-companion --scope user" <<<"$out"' "$out"
 mv "$work/installed.bak" "$config/plugins/installed_plugins.json"
 
 printf 'tampered\n' >> "$plugin/spoolway/types/setup/prompts/impl/PROMPT.md"
@@ -121,14 +122,14 @@ rm -rf "$c/.spoolway/pipelines"
 # --- Writing --------------------------------------------------------------------------------
 
 run "$c"
-check "writes into a consumer pinned at this copy's revision" '[ $status -eq 0 ]' "$out"
+check "writes into a consumer, at this copy's revision" '[ $status -eq 0 ]' "$out"
 check "the pipeline lands in .spoolway/pipelines/" 'cmp -s "$plugin/spoolway/types/setup/pipelines/dev.yml" "$c/.spoolway/pipelines/dev.yml"'
 check "the task template lands in .spoolway/templates/tasks/" '[ -f "$c/.spoolway/templates/tasks/dev.md" ]'
 check "a prompt symlink stays a symlink" '[ -L "$c/.spoolway/prompts/impl-spec" ] && [ "$(readlink "$c/.spoolway/prompts/impl-spec")" = impl ]'
 check "a script lands in scripts/spoolway/ and stays executable" '[ -x "$c/scripts/spoolway/lib.sh" ]'
 check "the consumer's own scripts and config are left alone" \
   '[ -z "$(git -C "$c" status --porcelain -- .spoolway/config.toml scripts/spoolway/checks.sh .claude)" ]'
-check "the lock names the plugin and the pinned revision" \
+check "the lock names the plugin and the installed revision" \
   'grep -qx "plugin spoolway-companion" "$c/.spoolway/plugin.lock" && grep -qx "revision $REV" "$c/.spoolway/plugin.lock"'
 check "the lock lists every path with its hash, as the manifest does" \
   '[ "$(grep -E "^[0-9]{6} " "$c/.spoolway/plugin.lock")" = "$(cat "$plugin/spoolway/types.manifest")" ]'
@@ -200,9 +201,6 @@ NEXT=2222222222222222222222222222222222222222
 rm "$plugin/spoolway/types/setup/templates/tasks/dev.md"
 bash "$plugin/spoolway/types.sh" manifest > "$plugin/spoolway/types.manifest"
 installed "$NEXT"
-jq --arg sha "$NEXT" '(.extraKnownMarketplaces[].source.plugins[] | select(.name == "spoolway-companion") | .source.sha) = $sha' \
-  "$c/.claude/settings.json" > "$work/s.json" && mv "$work/s.json" "$c/.claude/settings.json"
-commit "$c" "bump the pin"
 run "$c"
 check "a path the new revision no longer ships is deleted" '[ $status -eq 0 ] && [ ! -e "$c/.spoolway/templates/tasks/dev.md" ] && grep -q "deleted .spoolway/templates/tasks/dev.md" <<<"$out"' "$out"
 check "...the lock moves to the new revision" 'grep -qx "revision $NEXT" "$c/.spoolway/plugin.lock"'

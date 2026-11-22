@@ -7,7 +7,7 @@ is `claude-plugin/skills/setup/setup.sh` (`detect`, `plan`, `apply`, `labels`, `
 [issue-tracking.md](issue-tracking.md).
 
 The setup skill writes the consumer side of every extension point into a repository, moves an
-installed consumer to a newer pin, and reviews the move of spoolway itself to another release. One
+installed consumer to a newer companion revision, and reviews the move of spoolway itself to another release. One
 skill does all three: there is one entry point whether the repository is new to the companion,
 already on it, or about to change its spoolway binary.
 
@@ -15,8 +15,12 @@ already on it, or about to change its spoolway binary.
 
 It reads what is there file by file and key by key; it keeps no marker of its own. A file that
 exists is the consumer's: the skill only adds the keys and entries it lacks and never changes a
-value already set. The one value it changes is the companion's own pinned `sha`, on a version
-bump. It never writes a path `plugin.lock` lists; those go through `types.sh write`.
+value already set. A new consumer's `.claude/settings.json` gains two things, each only when
+missing: the github pointer to the catalogue (`extraKnownMarketplaces.spoolway-companion`, source
+`github`, repo `theTestTube/spoolway-companion`, no plugin list, no `ref` or `sha`) and the
+`enabledPlugins` id. An older inline `spoolway-companion` entry is reported and left as it is.
+Nothing else in `.claude/settings.json` changes, and a bump never edits it. It never writes a path
+`plugin.lock` lists; those go through `types.sh write`.
 
 A repository still on an older plugin is detected and left alone: moving it over is the work of
 its own cut-over, not of setup.
@@ -74,15 +78,38 @@ keys `memex_schedule` and `memex_auto_index_on_search`.
   cost of `false` with `boot` is that a search can miss the current session's work until the next
   login or a manual `memex index`.
 
+## The user-scope install
+
+The companion is installed by the person, once per machine, at user scope: one copy serves every
+checkout and worktree, and a project only enables it. `apply` checks the user-scope install record
+and, when there is none, prints the two commands and takes no types until it exists:
+
+```bash
+claude plugin marketplace add theTestTube/spoolway-companion --scope user
+claude plugin install spoolway-companion@spoolway-companion --scope user
+```
+
+Restart Claude Code, run setup again, and it takes the types at the installed revision into
+`.spoolway/plugin.lock`. The revision of the companion is every merge to `main`; the lock is the
+only place a consumer records which one it took. The `pin-drift` hook compares it with the install
+at each session start.
+
+A plugin that is not installed cannot report itself, so a consumer owns a SessionStart hook that
+does: copy `claude-plugin/templates/claude/hooks/missing-plugin.sh` to
+`.claude/hooks/missing-plugin.sh` and register it as its header shows. It names every plugin the
+project enables that has no install record and prints the commands above for it.
+
 ## A version bump
 
-On a repository already on the companion, it moves the pinned `sha`, installs or updates the plugin
-for each project path, takes the types and the lock again with `types.sh write`, writes any file and
-key the new version adds, and prints a diff for each copied template the new version changed,
-which it does not apply ([issue-tracking.md](issue-tracking.md#keeping-the-templates-current)).
-
-The pin is always an inline, sha-pinned `spoolway-companion` entry in the consumer's
-`.claude/settings.json`.
+On a repository already on the companion, `setup.sh bump` runs `claude plugin marketplace update
+spoolway-companion` and `claude plugin update spoolway-companion@spoolway-companion --scope user`,
+takes the types and the lock again with `types.sh write` at the revision the update installed,
+writes any file and key the new version adds, and prints a diff for each copied template the new
+version changed, which it does not apply
+([issue-tracking.md](issue-tracking.md#keeping-the-templates-current)). It takes no revision: the
+update brings the newest `main`. It never edits `.claude/settings.json`, so the file is
+byte-identical before and after, and an inline entry it finds there is reported and left. Restart
+Claude Code afterwards.
 
 ## A spoolway update
 

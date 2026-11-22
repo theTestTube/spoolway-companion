@@ -58,7 +58,7 @@ directory, trailing blanks, a leading `./` and a trailing `/` taken off. It does
 | `PAGES_LOG` | `pins.sh` | the log a page compile appends to | none: no check that a recompiled page was compiled, not edited by hand |
 | `PAGES_COMPILE_PATTERN` | `pins.sh` | the `sed` pattern that, at the start of a log line the branch added, precedes the compiled page names | `## \[[0-9-]*\] compile \| ` (quote it in the file: it ends in a blank) |
 | `PAGES_COMMIT_PREFIX` | `pins.sh` | the subject prefix of the pin commit | `docs(pages):` |
-| `PIN_DRIFT_PROTECTED` | `hooks/pin-drift` | the path under which `Write` and `Edit` are denied while the installed plugin differs from the pin | no denial; the drift warning still shows |
+| `PIN_DRIFT_PROTECTED` | `hooks/pin-drift` | the path under which `Write` and `Edit` are denied while the installed plugin differs from the revision in `.spoolway/plugin.lock` | no denial; the drift warning still shows |
 | `RUN_REPORT_REPO` | `run-report.sh`, the Feeding-back intake (through `run-report.sh repo`) | the report repository, named `[HOST/]OWNER/REPO` as `gh --repo` takes it (a name, not a path or a URL), that run reports are filed in and read from | the run repository, as `gh` reads it from the checkout (`SPOOLWAY_REPO` when set); the step fails when `gh` cannot tell |
 | `FINDINGS_REPO` | `findings.sh` | the repository, named `[HOST/]OWNER/REPO` as above, that holds the open "Weekly digest" issue | the run repository, as above; the step refuses when `gh` cannot tell |
 
@@ -274,6 +274,17 @@ steps run (`lib.sh` always, then `ci.sh`, `collect.sh`, `dod.sh`, `pins.sh`, `ru
 check` reports a step whose script or prompt is missing. Without the file, every path is taken.
 The file is the consumer's: `types.sh` never writes it, and the setup skill writes it only when it is missing. The companion's own
 `.spoolway/types.subset` is a worked example.
+
+## The missing-plugin hook
+
+`.claude/hooks/missing-plugin.sh` is a template under `claude-plugin/templates/claude/hooks/`.
+The consumer copies it once and registers it by hand as a `SessionStart` hook in
+`.claude/settings.json`; `setup apply` neither copies nor registers it. It reads `enabledPlugins`
+in `.claude/settings.json` (a `false` in `.claude/settings.local.json` turns a plugin off), the
+user's `installed_plugins.json`, and the `github` pointer of the marketplace for the
+`claude plugin marketplace add` command it prints. It writes nothing and never blocks the
+session. Without it, nothing tells a person that a plugin the project enables is not installed on
+their machine: a missing plugin cannot ship the hook that would report it.
 
 ## The issue-tracking hook
 
