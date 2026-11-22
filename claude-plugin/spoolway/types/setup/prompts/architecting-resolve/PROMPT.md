@@ -33,11 +33,15 @@ the frontier tickets its answer opens. Everything below narrows the skill to thi
   pane and the exchange is theirs, so ask, one question at a time with your recommended answer,
   and answer from the code and the issues whatever they can answer. Never answer for them.
   A **task** ticket you do alone where you can; otherwise hand the owner a precise checklist.
+  A **task** ticket whose work changes a tracked file is neither: this lane edits, commits and pushes
+  nothing. Hand it off as a draft Developing task (the drafting rule below, applied to this ticket itself),
+  then post a handoff comment on the ticket linking what the draft asks for, keep your claim, close
+  nothing and write no Decisions-so-far line for it.
   Nothing wakes you: wait for each answer in the pane. A reminder from the dispatcher is not the
   owner's answer: do not report, keep waiting, and leave one handoff note at the end,
   "quiet-lane reminder: <its text>, at <time>".
-- Record the resolution as the skill says: the answer as a comment on the ticket, close the
-  ticket, and append a context pointer to the map's Decisions-so-far. Those are the only writes
+- Unless the ticket was handed off above, record the resolution as the skill says: the answer as
+  a comment on the ticket, close the ticket, and append a context pointer to the map's Decisions-so-far. Those are the only writes
   on the tracker besides the new tickets below.
 - Graduate the fog the answer made specifiable into new tickets (create, then wire the blocking
   edges from the new ticket's side only: a new ticket is blocked by existing ones, never the
@@ -48,7 +52,7 @@ the frontier tickets its answer opens. Everything below narrows the skill to thi
   blocked by a new one, do not wire it: leave a handoff note naming both for the owner.
 - For each **new frontier ticket** (open, unblocked and unclaimed once the edges are wired; a
   ticket that was already on the frontier before your run is not new, and gets no draft), draft
-  one resolve-mode Architecting task document: write it to `$SPOOLWAY_SCRATCH`, then check and
+  one Architecting task document (resolve mode): write it to `$SPOOLWAY_SCRATCH`, then check and
   place it. The document starts from `.spoolway/templates/tasks/architecting.md` and carries, in
   its frontmatter, `pipeline: architecting`, `ticket:` the full URL of the new frontier ticket,
   `close_on_merge: false`, `base:` copied from the `base:` in this running task's own frontmatter
@@ -58,12 +62,19 @@ the frontier tickets its answer opens. Everything below narrows the skill to thi
   Check each with `spoolway task contract --from <dir>`, `<dir>` holding the drafts, then copy
   all of them, or none, into the project's `pending/` directory (the one that sits beside
   `queue/`, found from `$SPOOLWAY_TASK_FILE`).
+  A frontier ticket of type `wayfinder:task` whose work changes a tracked file is not drafted as an
+  Architecting task: draft a **Developing** task document for it instead, starting from
+  `.spoolway/templates/tasks/developing.md`, with, in its frontmatter, `pipeline: developing`,
+  `ticket:` the full URL of that ticket, `close_on_merge: true`, `base:` copied from the `base:` in
+  this running task's own frontmatter, the same as on the other drafts, and the other keys the
+  project's `spoolway task contract` requires, `group_description` among them. Its `## Intend` is the
+  ticket's question. Check it with the others.
 - **Queue nothing.** Never run `spoolway queue add`; a person sends the drafts from the queue
   screen. A ticket still blocked, and any fog, gets no draft.
 - Write to `$SPOOLWAY_SCRATCH/resolve.md`: first line, the ticket you resolved and its answer in
-  a sentence; then each ticket opened with its type and blocking edges, and each draft placed in
+  a sentence (for a ticket handed off, the ticket handed off and the draft written for it); then each ticket opened with its type and blocking edges, and each draft placed in
   `pending/`.
-- Leave handoff notes: the resolved ticket and its answer, the tickets opened, the drafts written
+- Leave handoff notes: the resolved ticket and its answer (or the ticket handed off and the draft written for it), the tickets opened, the drafts written
   to `pending/` (and that none is queued), and anything the owner decided that no ticket holds.
 - Then report a pass. When no new ticket reaches the frontier, no draft is written: say so in the
   message and pass. When the answer is that the map is done (no ticket and no fog remain), say so

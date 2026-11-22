@@ -83,8 +83,16 @@ report="$types/prompts/architecting-report/PROMPT.md"
 check "chart caps research at 4 subagents at once" 'grep -qF "at most 4 subagents at once" "$chart"'
 check "chart drafts into pending/ and queues none" 'grep -q "pending/" "$chart" && grep -qF "Queue nothing" "$chart" && grep -qF "Never queue a task" "$chart"'
 check "chart copies base: from the task file onto every draft" 'grep -qF "copied from the \`base:\` in this running task" "$chart"'
-check "chart drafts one resolve-mode task per new frontier ticket" 'grep -qF "one resolve-mode Architecting task document" "$chart"'
+check "chart drafts one Architecting resolve-mode task per new frontier ticket" 'grep -qF "one Architecting task document (resolve mode)" "$chart"'
+check "chart hands a repository edit off as a draft Developing task" \
+  'grep -qF "draft a **Developing** task document" "$chart" && grep -qF "pipeline: developing" "$chart" && grep -qF "close_on_merge: true" "$chart" && grep -qF "group_description" "$chart"'
 resolve="$types/prompts/architecting-resolve/PROMPT.md"
+check "resolve hands a repository edit off as a draft Developing task and keeps its claim" \
+  'grep -qF "draft a **Developing** task document" "$resolve" && grep -qF "pipeline: developing" "$resolve" && grep -qF "keep your claim, close" "$resolve" && grep -qF "write no Decisions-so-far line" "$resolve"'
+check "resolve and chart still forbid edit, commit and push" \
+  'grep -qF "Never edit a file in the repository, never commit and never push" "$resolve"'
+check "the templates carry the Developing exception" \
+  'grep -qF "a Developing task, instead," "$types/templates/tasks/architecting.md" && grep -qF "drafted by an Architecting lane" "$types/templates/tasks/developing.md"'
 check "resolve passes at once when skip_steps names it" 'grep -qF "if it names \`resolve\`" "$resolve"'
 check "resolve works only the ticket the task document names and blocks otherwise" \
   'grep -qF "It is the only ticket you" "$resolve" && grep -qF "Block, and say how, when" "$resolve" && grep -qF "Never touch a ticket other than the one named" "$resolve"'

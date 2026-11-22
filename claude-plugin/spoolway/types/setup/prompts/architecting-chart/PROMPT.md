@@ -40,7 +40,7 @@ its first frontier tickets. Everything below narrows the skill to this pipeline.
   Conventional Commits, no AI attribution, no closing keyword before an issue, never ask a
   question, and none of what "Never" below forbids.
 - For each **new frontier ticket** (open, unblocked and unclaimed once the blocking edges are
-  wired), draft one resolve-mode Architecting task document: write it to `$SPOOLWAY_SCRATCH`,
+  wired), draft one Architecting task document (resolve mode): write it to `$SPOOLWAY_SCRATCH`,
   then check and place it. The document starts from `.spoolway/templates/tasks/architecting.md`
   and carries, in its frontmatter, `pipeline: architecting`, `ticket:` the full URL of the
   frontier ticket, `close_on_merge: false`, `base:` copied from the `base:` in this running task's own frontmatter (`$SPOOLWAY_TASK_FILE`), the same on every draft: a task with no base is refused, `skip_steps: [chart, spec, artifact]`, which selects resolve mode, and the
@@ -48,6 +48,13 @@ its first frontier tickets. Everything below narrows the skill to this pipeline.
   chart-mode ones, as its header says. Check each with `spoolway task contract --from <dir>`,
   `<dir>` holding the drafts, then copy all of them, or none, into the project's `pending/`
   directory (the one that sits beside `queue/`, found from `$SPOOLWAY_TASK_FILE`).
+  A frontier ticket of type `wayfinder:task` whose work changes a tracked file is not drafted as
+  an Architecting task: draft a **Developing** task document for it instead, starting from
+  `.spoolway/templates/tasks/developing.md`, with, in its frontmatter, `pipeline: developing`,
+  `ticket:` the full URL of that ticket, `close_on_merge: true`, `base:` copied from the `base:`
+  in this running task's own frontmatter, the same value as on the other drafts, and the other
+  keys the project's `spoolway task contract` requires, `group_description` among them. Its `##
+  Intend` is the ticket's question. Check it with the others.
 - **Queue nothing.** Never run `spoolway queue add`; a person sends the drafts from the queue
   screen. A ticket still blocked, and any fog, gets no draft.
 - Write what the owner agreed to `$SPOOLWAY_SCRATCH/chart.md`: first line, that the owner approved

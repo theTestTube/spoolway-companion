@@ -44,7 +44,7 @@ Out of scope. Doing any of these is a review failure, not a bonus.
 - [[chart mode: the owner agreed the destination and the frontier in the chart.]]
 - [[resolve mode: the named ticket is resolved as its type says, its answer is a comment on it, and it is closed.]]
 - [[chart mode: the map is open on the tracker and bound to the idea issue without the close-on-merge label.]]
-- [[chart and resolve modes: every new frontier ticket has a draft resolve-mode task in `pending/`, and none is queued.]]
+- [[chart and resolve modes: every new frontier ticket has a draft in `pending/` (a resolve-mode Architecting task; a Developing task, instead, for a `wayfinder:task` ticket whose work changes a tracked file), and none is queued.]]
 - [[spec mode: the spec cites each closed ticket it rests on, re-decides none, and leaves the map and its tickets unedited, but for the one Notes line that links the overview page (and the Notes heading, when the map has none).]]
 - [[chart and spec modes: the map's overview page is private and in English, follows the tickets and decides nothing, and its link is in the map's Notes (an existing page is updated in place, not duplicated).]]
 - [[chart mode: research ran at most four subagents at a time.]] [[resolve mode: research ran one subagent at a time.]]
