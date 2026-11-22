@@ -1,22 +1,18 @@
-What the board's `u`/`U` keys do to a row, from a script: carry a not-started task's document back to the pending directory, stripped of every reserved key, so `queue add --from` takes it again unchanged.
+What `unqueue` in the board's options menu does to a row, from a script, with no prompt: take any stopped task, and every task after it in its group, back to the pending directory, stripped of every reserved key, so `queue add --from` takes it again unchanged.
 
-A task that has started is refused, naming its stage and both routes onward, unless `--force` says to interrupt any live lane, record its uncommitted work and tear the checkout down first — the same care `Dispatcher::tear_down_checkout` always takes, all or nothing.
+A task that has started has its worktree and its local `task/<id>` branch deleted whatever they hold, with no commit first, all or nothing. The command says what it deleted, names any `last:` step the task left at the end of the group walked past, and prints one line per task it moved. A running task is refused, naming the pause command to run first.
 
-Usage: spoolway queue unqueue [OPTIONS] [TASK]
+A copy of a routine whose file is still under `.spoolway/routines/` is deleted instead of carried to pending: the routine is there to queue again.
+
+Usage: spoolway queue unqueue [OPTIONS] <TASK>
 
 Arguments:
-  [TASK]
-          Task id to unqueue. Omitted only with `--all`
+  <TASK>
+          Task id to unqueue
 
 Options:
-      --all
-          Every not-started task, the way the board's `U` does — with no per-task dependency check, since anything depending on the set has not started either and is in the set too. Refused together with `--force`, in either flag order: that pair would tear down every checkout in the queue in one line
-
   -C, --repo <DIR>
           Repo to operate on. Defaults to the current directory's project
-
-      --force
-          Interrupt any live agent lane, record uncommitted work through `auto_commit`, and tear the checkout down through `Dispatcher::tear_down_checkout` before unqueuing a task that has started. Refused while a dispatcher holds the run lock, naming its pid. A no-op flag on a task still on `queued` — the bare command already unqueues it, with no checkout to tear down
 
       --json
           Machine-readable output, where the command supports it
