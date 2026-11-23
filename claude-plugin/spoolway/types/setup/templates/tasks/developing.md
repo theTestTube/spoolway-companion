@@ -1,3 +1,16 @@
+<!--
+A Developing task drafted by an Architecting lane (chart or resolve mode) for a `wayfinder:task`
+ticket whose work changes a tracked file carries, in its frontmatter,
+
+  pipeline: developing
+  ticket: https://github.com/<owner>/<repo>/issues/<n>   the map ticket, as a full URL
+  close_on_merge: true
+  base: <copied from the drafting task's own base:>
+  group_description: <one line>                          when the project's contract requires it
+
+Its `## Intend` is the ticket's question. Delete this comment.
+-->
+
 ## Context
 
 Three to five facts, one line each. The plan that produced this task is not something a lane can
