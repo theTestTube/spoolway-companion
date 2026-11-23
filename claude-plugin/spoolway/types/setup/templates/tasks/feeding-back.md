@@ -33,6 +33,7 @@ Out of scope. Doing any of these is a review failure, not a bonus.
 ## Acceptance criteria
 
 - Every input is routed, merged into an open issue or dropped, and the counts comment on the digest says how many of each.
+- The counts comment lists every open pull request of the project's repositories, with its age, merge state, last activity, the task or issue behind it and what it waits on.
 - The architecture behind the grouped signals is reviewed before routing, and an issue opened from an architectural group carries the review's summary.
 - Every routed issue carries `needs-triage`, a class label and a proposed priority, and cites its digest comment.
 - A finding that restates an open issue is a comment on that issue, not a new one.

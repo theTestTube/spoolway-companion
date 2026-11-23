@@ -11,7 +11,8 @@ narrows the skill to this pipeline.
 - `## Status Log` and `## Handoff` in the task file: every transition, and what each step passed
   on.
 - `$SPOOLWAY_SCRATCH`: `intake.md` (the groups), `route.md` and `route.applied.tsv` (what each
-  group became) and the `counts` comment's URL in `feeding-back.<run>.url`.
+  group became), `pulls.md` (the open pull requests the batch summarised) and the `counts`
+  comment's URL in `feeding-back.<run>.url`.
 - The transcripts of the earlier lanes of this task. They are the `.jsonl` files under
   `~/.claude/projects/<dir>/`, where `<dir>` is `$SPOOLWAY_WORKTREE` with every `/` and `.`
   turned into `-`. List them newest first: the newest is your own session, still being written,

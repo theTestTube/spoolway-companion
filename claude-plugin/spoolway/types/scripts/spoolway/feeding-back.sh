@@ -16,7 +16,7 @@
 #                            Writes `participants.applied.tsv`.
 #   feeding-back.sh counts   the `counts` command step. Posts one comment on the digest with how
 #                            many inputs were received, routed, merged into an existing issue and
-#                            dropped, once per run.
+#                            dropped, and the open pull requests `intake` listed, once per run.
 #   feeding-back.sh rotate   the `rotate` command step, after `counts`. Opens the next week's
 #                            digest and closes the processed one (the issue named by `ticket:`),
 #                            so each project has exactly one digest open and no lane opens or
@@ -51,6 +51,11 @@
 # and cites its sources. The labels are a proposal: this script creates no label, and a label the
 # repository lacks is the tracker's refusal. A merge needs an open issue. The task's own work
 # issue is never written on.
+#
+# The intake lane lists the open pull requests of the project's repositories in
+# `pulls.md`, one digest-ready line each: the counts comment carries them, so the digest
+# summarises every open pull request and what it waits on. The list is not an input: the counts do
+# not include it.
 #
 # The lane writes each participant issue as a block of `participants.md`, with no participant text:
 #
@@ -96,6 +101,7 @@ ledger=$scratch/route.md
 people=$scratch/participants.md
 people_applied=$scratch/participants.applied.tsv
 arch=$scratch/architecture.md
+pulls=$scratch/pulls.md
 applied=$scratch/route.applied.tsv
 err=$scratch/feeding-back.err
 mkdir -p "$scratch"
@@ -501,6 +507,12 @@ body=$scratch/feeding-back.body.md
     echo "Routed by the last batch and merged since:"
     cat "$scratch/merged-since-last.md"
   fi
+  if [ -s "$pulls" ]; then
+    echo
+    echo "Open pull requests of the project's repositories:"
+    echo
+    cat "$pulls"
+  fi
   echo "$marker"
 } > "$body"
 
@@ -509,7 +521,7 @@ if ! existing=$(gh api "repos/$digest_repo/issues/$digest_number/comments" --pag
   echo "REFUSED: could not read the comments of $digest: $(cat "$err")" >&2
   exit 2
 fi
-refuse_participant_text "$body" "$scratch/merged-since-last.md"
+refuse_participant_text "$body" "$scratch/merged-since-last.md" "$pulls"
 existing=$(printf '%s\n' "$existing" | grep -E '^https://github\.com/' | head -1 || true)
 if [ -n "$existing" ]; then
   echo "$existing" > "$posted"
