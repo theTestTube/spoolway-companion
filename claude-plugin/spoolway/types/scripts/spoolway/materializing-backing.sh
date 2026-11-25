@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Written once by /spoolway-companion:setup from the companion's template, then yours: the
-# companion never updates it; a later bump prints the template's changes for you to apply.
+# Shipped with the Materializing pipeline in this plugin's types, at the revision
+# .spoolway/plugin.lock records: a retake rewrites it, so it carries no project's specifics. What
+# differs between consumers is read from .spoolway/companion.env.
 #
 # The `backing` step of the Materializing pipeline: the backing gate. What the `recall` lane found
 # in session history reaches the grill only when the project itself says it; a candidate that

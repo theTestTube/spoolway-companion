@@ -209,6 +209,17 @@ subset_for() {
       .spoolway/templates/tasks/*.md)
         n=${path##*/}; n=${n%.md}
         if grep -qxF "$n" <<<"$all"; then grep -qxF "$n" <<<"$chosen" && echo "$path"; else echo "$path"; fi ;;
+      scripts/spoolway/*.sh)
+        # A script a pipeline runs is taken only with a pipeline that runs it, so a consumer
+        # that does not take Materializing never gets its scripts. One no pipeline names (a
+        # helper, or a script only a prompt runs) is taken always.
+        if grep -qE "(^|[[:space:]])$path([[:space:]]|$)" "$types"/setup/pipelines/*.yml; then
+          for p in $chosen; do
+            grep -qF "$path" "$types/setup/pipelines/$p.yml" && { echo "$path"; break; }
+          done
+        else
+          echo "$path"
+        fi ;;
       *) echo "$path" ;;
     esac
   done
