@@ -33,6 +33,27 @@ its first frontier tickets. Everything below narrows the skill to this pipeline.
 - The map is bound to the idea issue as a child of it and **without** the close-on-merge label:
   no pull request is opened by this pipeline, so nothing merges, and the idea issue stays open.
   Never add `spoolway:task` or any closing keyword to the map, a ticket or a comment.
+
+**The map's body is written only through one gated call.** Read the idea issue byte for byte with
+`--json body | jq -j .body`, never `--jq .body`, which adds a newline per read, so a body grows an
+empty line per edit. `-R <owner/repo>` needs no git checkout: it runs from `$SPOOLWAY_SCRATCH`.
+Chart into `map.after.md`, emptied right after that read so the body an earlier attempt left
+behind never reaches the write; look at `diff -u` of the two files; then write with every step
+chained: a read that fails leaves the write unrun, and a map that does not read back exactly as
+written fails the call.
+
+    set -o pipefail
+    gh issue view <idea> -R <owner/repo> --json body | jq -j .body > "$SPOOLWAY_SCRATCH/idea.before.md" \
+      && : > "$SPOOLWAY_SCRATCH/map.after.md"
+    # chart into map.after.md only, then look at diff -u of the two
+    gh issue view <idea> -R <owner/repo> --json body | jq -j .body | cmp -s - "$SPOOLWAY_SCRATCH/idea.before.md" \
+      && url=$(gh issue create -R <owner/repo> --title "<the map's title>" --label wayfinder:map --body-file "$SPOOLWAY_SCRATCH/map.after.md") \
+      && gh issue view "$url" -R <owner/repo> --json body | jq -j .body | cmp - "$SPOOLWAY_SCRATCH/map.after.md"
+
+Once the map exists, a change to its body is the same call with the map in place of the idea issue
+and `gh issue edit <map> -R <owner/repo> --body-file "$SPOOLWAY_SCRATCH/map.after.md"` in place of
+the create.
+
 - **Research fans out to at most 4 subagents at once.** The skill fires one per `research`
   ticket: start the first four, and start a fifth only after one has finished. A ticket beyond
   the four waits for a free slot; it is never run in a fifth.

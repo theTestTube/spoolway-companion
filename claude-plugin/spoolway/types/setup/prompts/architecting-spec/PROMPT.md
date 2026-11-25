@@ -40,6 +40,22 @@ synthesizes from a conversation, and you have none.
 - Publish the spec as a new issue in this repository's tracker, in the shape the tracker doc
   gives, with the triage label it names for work ready for an agent. Link it to the map with
   `part of #N`. Leave the map and every child ticket as they are: no comment, no label, no close.
+
+**The spec's body is written only through one gated call.** Read the map byte for byte with
+`--json body | jq -j .body`, never `--jq .body`, which adds a newline per read. `-R <owner/repo>`
+needs no git checkout: it runs from `$SPOOLWAY_SCRATCH`. Build `spec.body.md` fresh from the copy
+you just read and the closed tickets, so a file an earlier attempt left behind never reaches the
+write. Then create with every step chained: a read that fails leaves the write unrun, a map that
+changed under the copy takes no create, and a body that does not read back exactly as written
+fails the call.
+
+    set -o pipefail
+    gh issue view <map> -R <owner/repo> --json body | jq -j .body > "$SPOOLWAY_SCRATCH/map.before.md"
+    # build $SPOOLWAY_SCRATCH/spec.body.md from it and the closed tickets
+    gh issue view <map> -R <owner/repo> --json body | jq -j .body | cmp -s - "$SPOOLWAY_SCRATCH/map.before.md" \
+      && url=$(gh issue create -R <owner/repo> --title "<the spec's title>" --label "<the tracker doc's label for work ready for an agent>" --body-file "$SPOOLWAY_SCRATCH/spec.body.md") \
+      && gh issue view "$url" -R <owner/repo> --json body | jq -j .body | cmp - "$SPOOLWAY_SCRATCH/spec.body.md"
+
 - Write to `$SPOOLWAY_SCRATCH/spec.md`: first line, the URL of the spec; then the tickets cited.
 - Leave handoff notes: the spec's URL, the closed tickets it cites, and each seam a ticket decided.
 - Then report a pass. This pipeline opens no pull request.

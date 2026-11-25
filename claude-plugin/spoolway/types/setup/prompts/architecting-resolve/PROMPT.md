@@ -43,6 +43,23 @@ the frontier tickets its answer opens. Everything below narrows the skill to thi
 - Unless the ticket was handed off above, record the resolution as the skill says: the answer as
   a comment on the ticket, close the ticket, and append a context pointer to the map's Decisions-so-far. Those are the only writes
   on the tracker besides the new tickets below.
+
+**The map's body is written only through one gated call.** Read it byte for byte with
+`--json body | jq -j .body`, never `--jq .body`, which adds a newline per read, so the body grows
+an empty line per edit. `-R <owner/repo>` needs no git checkout: it runs from `$SPOOLWAY_SCRATCH`.
+Build `map.after.md` from `map.before.md`, the copy just read, so the file an earlier attempt left
+behind never reaches the write; look at `diff -u` of the two; then write with every step chained:
+a read that fails leaves the write unrun, and a body that does not read back exactly as written
+fails the call.
+
+    set -o pipefail
+    gh issue view <map> -R <owner/repo> --json body | jq -j .body > "$SPOOLWAY_SCRATCH/map.before.md" \
+      && cp "$SPOOLWAY_SCRATCH/map.before.md" "$SPOOLWAY_SCRATCH/map.after.md"
+    # edit map.after.md only, then look at diff -u of the two
+    gh issue view <map> -R <owner/repo> --json body | jq -j .body | cmp -s - "$SPOOLWAY_SCRATCH/map.before.md" \
+      && gh issue edit <map> -R <owner/repo> --body-file "$SPOOLWAY_SCRATCH/map.after.md" \
+      && gh issue view <map> -R <owner/repo> --json body | jq -j .body | cmp - "$SPOOLWAY_SCRATCH/map.after.md"
+
 - Graduate the fog the answer made specifiable into new tickets (create, then wire the blocking
   edges from the new ticket's side only: a new ticket is blocked by existing ones, never the
   reverse), clearing each graduated patch from Not yet specified. Work the answer shows to sit

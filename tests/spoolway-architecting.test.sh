@@ -128,6 +128,16 @@ check "spec blocks when a ticket it needs is still open" 'grep -qF "a ticket the
 check "spec cites each closed ticket and re-decides none" 'grep -qF "Cite each closed ticket" "$spec" && grep -qF "Re-decide nothing" "$spec"'
 check "spec opens no pull request, queues nothing and leaves the map unedited" \
   'grep -qF "opens no pull request" "$spec" && grep -qF "Never open a pull request" "$spec" && grep -qF "Never queue a task" "$spec" && grep -qF "Never edit, close, relabel or comment on the map" "$spec"'
+check "chart, resolve and spec each carry a byte-exact read-then-write recipe with -R" \
+  'ok=1; for f in "$chart" "$resolve" "$spec"; do grep -qF "jq -j .body" "$f" && grep -qF -- "-R <owner/repo>" "$f" && grep -qF "set -o pipefail" "$f" && grep -qF "before.md" "$f" && grep -qF -- "--body-file" "$f" || ok=0; done; [ $ok = 1 ]'
+check "each recipe chains its write to the read that gates it, in the same call" \
+  'ok=1; for f in "$chart" "$resolve" "$spec"; do grep -A1 -F "cmp -s - " "$f" | grep -qE "&& (gh issue edit|url=)" || ok=0; done; [ $ok = 1 ]'
+check "each recipe reads the body back and fails on a difference" \
+  'ok=1; for f in "$chart" "$resolve" "$spec"; do grep -qF "| cmp - " "$f" || ok=0; done; [ $ok = 1 ]'
+check "each recipe builds the after file fresh, so a stale one never reaches the write" \
+  'ok=1; for f in "$chart" "$resolve" "$spec"; do grep -qF "an earlier attempt" "$f" || ok=0; done; [ $ok = 1 ]'
+check "each recipe says why: --jq .body adds a newline, -R runs outside a checkout" \
+  'ok=1; for f in "$chart" "$resolve" "$spec"; do grep -qF "never \`--jq .body\`" "$f" && grep -qF "no git checkout" "$f" || ok=0; done; [ $ok = 1 ]'
 check "report files through run-report.sh and writes findings through findings.sh" \
   'grep -qF "scripts/spoolway/run-report.sh file --urgent" "$report" && grep -qF "scripts/spoolway/findings.sh write" "$report"'
 check "report writes at most five findings, none on the work issue" \
