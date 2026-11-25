@@ -7,9 +7,9 @@
 #
 #   PAGES_DIR             the directory of the pages, relative to the repository root. Unset, every
 #                         mode says so and passes at once.
-#   PAGES_GATE            the command that reports stale pages, in the gate format below
-#                         (default `scripts/gates/run.sh stale-pages`). It reads STALE_PAGES_SCOPE
-#                         and STALE_PAGES_BASE.
+#   PAGES_GATE            the command that reports stale pages, in the record contract below
+#                         (default `scripts/gates/run.sh stale-pages`). It reads STALE_PAGES_RECORDS,
+#                         STALE_PAGES_SCOPE and STALE_PAGES_BASE.
 #   PAGES_LOG             the log a page compile appends to (default: none, no edit-by-hand check).
 #   PAGES_COMPILE_PATTERN the sed pattern that, at the start of a log line the branch added,
 #                         precedes the compiled page names (default `## \[[0-9-]*\] compile | `).
@@ -29,9 +29,19 @@
 # answers for every stale page, it recompiles a page that no longer holds itself, and the `pin`
 # step fails unless the full gate ends GREEN.
 #
-# The gate prints one block per check: a `--- <name>` line, then `  actual:   <text>` and
-# `  verdict:  GREEN|RED`, and ends with `=== GREEN` or `=== RED`. A red page's actual names
-# `deleted: <path>` or `changed: <path>[; ...]`, optionally followed by ` (since <commit>)`.
+# The gate is asked in records mode (`STALE_PAGES_RECORDS=1`): it prints one record per page,
+# one line of TAB separated fields, and ends with `=== GREEN` or `=== RED`:
+#
+#   <slug> <pin> <pin-in-history> <deleted> <changed> <owed-by> <compile-proof>
+#
+# `slug` is the page file name without `.md`; `pin` is its 40-hex pin, or empty; `pin-in-history`
+# is `true` or `false`; `deleted` and `changed` are the cited paths that were deleted or changed
+# since the pin, `;` separated, empty when none; `owed-by` is `branch` (this branch made the page
+# stale), `base` (only the base carries it, reported and never blocking) or `none` (not stale); and
+# `compile-proof` is `yes`, `no` or `n/a`. A record is RED when `owed-by` is `branch` or `base`,
+# GREEN when it is `none`. The off-history flag and the compile proof are fields, so no gate
+# message is ever read as a cited path. A gate that cannot speak the contract, or a repo with no
+# wiki, names `scripts/spoolway/stale-pages-stub.sh` as PAGES_GATE.
 #
 # The record is `stale-pages.md` in the task's scratch space, one line per page:
 #
@@ -121,35 +131,52 @@ if [ -n "$task_file" ] && [ -f "$task_file" ] || [ -n "${SPOOLWAY_SCRATCH:-}" ];
   record=$(task_scratch "$task_file")/stale-pages.md
 fi
 
-# gate <scope>: runs the stale-pages gate into $gate_out and $gate_rc.
+# record_reason <record>: the reason a record is red, as prose, from the contract's fields alone.
+# The off-history flag and the compile proof are fields here, never a cited path.
+record_reason() {
+  printf '%s\n' "$1" | awk -F'\t' '
+    { why = ""
+      if ($4 != "") why = "deleted: " $4
+      if ($5 != "") why = why (why != "" ? "; " : "") "changed: " $5
+      if ($3 == "false") why = why (why != "" ? "; " : "") "pin " substr($2, 1, 7) " is not in history"
+      if ($7 == "no") why = why (why != "" ? "; " : "") "no compile proof"
+      print (why != "" ? why : "red") }'
+}
+
+# gate <scope>: runs the stale-pages gate in records mode into $gate_out and $gate_rc. The gate
+# reads STALE_PAGES_RECORDS and prints the record contract's one line per page, not prose.
 gate() {
   gate_rc=0
   if [ "$1" = branch ]; then
-    echo "$mode: STALE_PAGES_SCOPE=branch STALE_PAGES_BASE=$base $PAGES_GATE"
-    gate_out=$(STALE_PAGES_SCOPE=branch STALE_PAGES_BASE=$base bash -c "$PAGES_GATE" 2>&1) || gate_rc=$?
+    echo "$mode: STALE_PAGES_RECORDS=1 STALE_PAGES_SCOPE=branch STALE_PAGES_BASE=$base $PAGES_GATE"
+    gate_out=$(STALE_PAGES_RECORDS=1 STALE_PAGES_SCOPE=branch STALE_PAGES_BASE=$base bash -c "$PAGES_GATE" 2>&1) || gate_rc=$?
   else
-    echo "$mode: $PAGES_GATE"
-    gate_out=$(env -u STALE_PAGES_SCOPE -u STALE_PAGES_BASE bash -c "$PAGES_GATE" 2>&1) || gate_rc=$?
+    echo "$mode: STALE_PAGES_RECORDS=1 $PAGES_GATE"
+    gate_out=$(STALE_PAGES_RECORDS=1 env -u STALE_PAGES_SCOPE -u STALE_PAGES_BASE bash -c "$PAGES_GATE" 2>&1) || gate_rc=$?
   fi
 }
 
-# gate_summary: the red checks of the last gate run, whole, and its closing line.
+# gate_summary: the red records of the last gate run, rendered as the contract's fields, and the
+# gate's closing line.
 gate_summary() {
-  printf '%s\n' "$gate_out" | awk '
-    /^--- / { if (red) printf "%s", block; block = ""; red = 0 }
-    /^=== (GREEN|RED) / { if (red) printf "%s", block; block = ""; red = 0; print; next }
+  printf '%s\n' "$gate_out" | awk -F'\t' '
+    /^=== (GREEN|RED) / { print; next }
     /^=== / { next }
-    { block = block $0 "\n" }
-    /^  verdict:  RED/ { red = 1 }
-    END { if (red) printf "%s", block }'
+    NF < 7 || ($6 != "branch" && $6 != "base") { next }
+    { printf "--- stale-pages/%s\n", $1
+      printf "  slug:           %s\n", $1
+      printf "  pin:            %s\n", $2
+      printf "  pin-in-history: %s\n", $3
+      printf "  deleted:        %s\n", $4
+      printf "  changed:        %s\n", $5
+      printf "  owed-by:        %s\n", $6
+      printf "  compile-proof:  %s\n", $7 }'
 }
 
-# reds: one line per red check of the last gate run, <check name> TAB <its actual>.
+# reds: one record per red page of the last gate run, the contract's fields, one line per page.
+# A record is red when it is owed by the branch or the base, green when owed by none.
 reds() {
-  printf '%s\n' "$gate_out" | awk '
-    /^--- / { name = $2; actual = "" }
-    /^  actual:   / { actual = substr($0, 13) }
-    /^  verdict:  RED/ { print name "\t" actual }'
+  printf '%s\n' "$gate_out" | awk -F'\t' 'NF >= 7 && ($6 == "branch" || $6 == "base") { print }'
 }
 
 # declared <slug>: the record's last line for the page, as <verdict>, <commit> and <why> with a
@@ -176,11 +203,12 @@ page_pin() {
     END { print (verified != "" ? verified : source) }' "$PAGES_DIR/$1.md"
 }
 
-# drift_paths <actual>: the paths a red verdict names, one per line; nothing when the page is red
-# for its pin and not for a path.
+# drift_paths <record>: the paths a red record names, one per line: its deleted and changed
+# fields alone. The pin, the off-history flag and the compile proof are fields, never paths.
 drift_paths() {
-  case $1 in deleted:* | changed:*) ;; *) return 0 ;; esac
-  printf '%s\n' "${1% (since *}" | tr ';' '\n' | sed -E 's/^ *(deleted|changed): //'
+  printf '%s\n' "$1" | awk -F'\t' '
+    { n = split($4, d, ";"); for (i = 1; i <= n; i++) if (d[i] != "") print d[i]
+      n = split($5, c, ";"); for (i = 1; i <= n; i++) if (c[i] != "") print c[i] }'
 }
 
 # whole_page_reds: runs the full gate once, after a red branch-scoped run, and keeps its red lines
@@ -194,28 +222,45 @@ whole_page_reds() {
   gate_out=$kept_out gate_rc=$kept_rc
 }
 
-# judge <check name> <its actual>: says what the record owes for one red page. Succeeds only when
-# the page is declared `holds`, with a reason, at a commit since which none of its drifted paths
-# changed. `checks` and the `pin` step both ask it: a record that was true once is not enough.
+# judge <record>: says what the record owes for one red page. Succeeds only when the page is
+# declared `holds`, with a reason, at a commit since which none of its drifted paths changed, and
+# when the record is owed by this branch: a red the base carries is reported and passes. `checks`
+# and the `pin` step both ask it: a record that was true once is not enough.
 judge() {
-  local name=$1 actual=$2 slug=${1#stale-pages/} pin read_cmd verdict commit why whole_actual
+  local rec=$1 slug pin pin_history deleted changed owed proof
+  local name read_cmd verdict commit why whole_rec whole_deleted reason
   local -a paths
+  IFS=$'\037' read -r slug pin pin_history deleted changed owed proof \
+    < <(printf '%s\n' "$rec" | tr '\t' '\037')
+  name="stale-pages/$slug"
+  reason=$(record_reason "$rec")
   if [ ! -f "$PAGES_DIR/$slug.md" ]; then
-    echo "ENVIRONMENT: $mode: $name is red: $actual" >&2
+    echo "ENVIRONMENT: $mode: $name is red: $reason" >&2
     return 1
   fi
-  whole_actual=$(printf '%s\n' "$whole" | awk -F'\t' -v name="$name" '$1 == name { print $2 }')
-  mapfile -t paths < <({ drift_paths "$actual"; drift_paths "$whole_actual"; } | LC_ALL=C sort -u)
+  # A red the base carries, not this branch: reported, never blocking. The gate says which side
+  # owes it with `owed-by`, and the branch answers only for the reds it caused.
+  if [ "$owed" = base ]; then
+    echo "$mode: $slug is red from the base, not this branch: $reason. The base carries it; this branch owes nothing"
+    return 0
+  fi
+  whole_rec=$(printf '%s\n' "$whole" | awk -F'\t' -v slug="$slug" '$1 == slug { print; exit }')
+  whole_deleted=$(printf '%s\n' "$whole_rec" | cut -f4)
+  mapfile -t paths < <({ drift_paths "$rec"; drift_paths "$whole_rec"; } | LC_ALL=C sort -u)
   if [ "${#paths[@]}" -eq 0 ]; then
-    # Red for its pin. A branch that touched the page did it; otherwise the base carries it.
+    if [ "$proof" = no ]; then
+      echo "$mode: $slug has no compile proof: $reason. Recompile it from a source it cites, commit, then record \`holds\` at that commit" >&2
+      return 1
+    fi
+    # Red for its pin, not for a path. A branch that touched the page did it; otherwise the base carries it.
     if [ -n "$(git diff --name-only "$base" -- "$PAGES_DIR/$slug.md")" ]; then
-      echo "$mode: $slug: $actual. This branch changed the page, and a lane never edits \`verified_commit\` or \`source_commit\`: undo that change (\`git show $base:$PAGES_DIR/$slug.md\` has the lines as they were); the \`pin\` step moves the pin after the handover" >&2
+      echo "$mode: $slug: $reason. This branch changed the page, and a lane never edits \`verified_commit\` or \`source_commit\`: undo that change (\`git show $base:$PAGES_DIR/$slug.md\` has the lines as they were); the \`pin\` step moves the pin after the handover" >&2
     else
-      echo "ENVIRONMENT: $mode: $slug: $actual, and this branch did not touch the page" >&2
+      echo "ENVIRONMENT: $mode: $slug: $reason, and this branch did not touch the page" >&2
     fi
     return 1
   fi
-  pin=$(page_pin "$slug")
+  [ -n "$pin" ] || pin=$(page_pin "$slug")
   read_cmd="git diff $pin -- ${paths[*]}"
   IFS=$'\037' read -r verdict commit why < <(declared "$slug"; echo) || true
   case $verdict in
@@ -233,12 +278,10 @@ judge() {
       return 1
       ;;
   esac
-  case "$actual; $whole_actual" in
-    *deleted:*)
-      echo "$mode: $slug is declared holds and names a file that is gone (${whole_actual:-$actual}). A page that cites a deleted file does not hold: record it \`no-longer-holds\` and block the task" >&2
-      return 1
-      ;;
-  esac
+  if [ -n "$deleted$whole_deleted" ]; then
+    echo "$mode: $slug is declared holds and names a file that is gone ($reason). A page that cites a deleted file does not hold: record it \`no-longer-holds\` and block the task" >&2
+    return 1
+  fi
   if [ -z "$why" ]; then
     echo "$mode: $slug is declared holds with no reason: say why the page still holds, after reading \`$read_cmd\`" >&2
     return 1
@@ -302,7 +345,10 @@ if [ "$mode" != pin ]; then
   gate "$scope"
   if [ "$gate_rc" -eq 0 ]; then
     gate_summary
-    if [ "$scope" = all ]; then
+    n_red=$(reds | wc -l)
+    if [ "$n_red" -gt 0 ]; then
+      echo "$mode: $n_red red page(s) are reported, none owed by this branch"
+    elif [ "$scope" = all ]; then
       echo "$mode: no page cites a path that was deleted or changed since its pin"
     else
       echo "$mode: no page cites a path this branch changed, or every such page is unchanged since its pin"
@@ -324,11 +370,11 @@ if [ "$mode" != pin ]; then
   no_red_named
   whole_page_reds
   owed=$hand
-  while IFS=$'\t' read -r name actual; do
-    judge "$name" "$actual" || owed=$((owed + 1))
+  while IFS= read -r rec; do
+    judge "$rec" || owed=$((owed + 1))
   done < <(reds)
   if [ "$owed" -eq 0 ]; then
-    echo "$mode: every red page is declared holds; the \`pin\` step moves the pins after the handover"
+    echo "$mode: no red page is owed by this branch; the \`pin\` step moves the pins after the handover"
     exit 0
   fi
   echo "$mode: $owed page(s) still owed" >&2
@@ -482,9 +528,9 @@ if [ "$gate_rc" -eq 1 ]; then
   if [ -z "$(reds)" ]; then restore; fi
   no_red_named
   whole_page_reds
-  while IFS=$'\t' read -r name actual; do
-    if judge "$name" "$actual"; then
-      pages+=("$PAGES_DIR/${name#stale-pages/}.md")
+  while IFS= read -r rec; do
+    if judge "$rec"; then
+      pages+=("$PAGES_DIR/${rec%%$'\t'*}.md")
     else
       refused=$((refused + 1))
     fi

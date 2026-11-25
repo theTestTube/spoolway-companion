@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Offline test for this repository's Developing pipeline scripts: the command steps
 # the types do not ship (scripts/spoolway/checks.sh, handover.sh, extra-*.sh),
-# scripts/gates/run.sh, and the shared pins.sh with and without a pages directory. It
+# scripts/gates/run.sh, and the shipped pins.sh with and without a pages directory, its record
+# contract and its no-wiki stub. It
 # also fails when the gates of checks.sh and the Gates job of .github/workflows/ci.yml run different
 # commands. `git` is the real one, against repositories made here; `spoolway` and `gh` are
 # fakes that record their calls. Nothing reaches GitHub or the network, and no dispatcher starts.
@@ -46,6 +47,9 @@ check "checks.sh runs spoolway pipeline check" 'printf "%s\n" "$in_checks" | gre
 app="$work/app"
 mkdir -p "$app/scripts/spoolway" "$app/scripts/gates" "$work/bin" "$work/state"
 cp "$repo"/scripts/spoolway/*.sh "$app/scripts/spoolway/"
+# The plugin source is canonical for a shipped script: the installed copy is the revision this
+# repository took, and this suite drives what the plugin would write.
+cp "$repo"/claude-plugin/spoolway/types/scripts/spoolway/pins.sh "$app/scripts/spoolway/pins.sh"
 cp -r "$repo"/scripts/gates/. "$app/scripts/gates/"
 git -C "$app" init -q -b main
 git -C "$app" add -A
@@ -145,6 +149,65 @@ run pins.sh check
 check "pins.sh check does not call a failed gate that named no page green" '[ $rc -ne 0 ] && grep -q "^ENVIRONMENT:" "$work/err"' "rc=$rc $(cat "$work/out" "$work/err")"
 rm -rf "$app/.spoolway" "$app/pages"
 check "the runner refuses a gate it does not know" '! bash "$app/scripts/gates/run.sh" budget 2>/dev/null'
+
+# --- pins.sh consumes the drift record contract -----------------------------------------------
+
+stub="$repo/claude-plugin/spoolway/types/scripts/spoolway/stale-pages-stub.sh"
+STALE_PAGES_RECORDS=1 bash "$stub" > "$work/out" 2> "$work/err"; rc=$?
+check "the no-wiki stub answers the records mode with GREEN" '[ $rc -eq 0 ] && grep -q "^=== GREEN" "$work/out"' "rc=$rc $(cat "$work/out" "$work/err")"
+
+mkdir -p "$app/pages" "$app/.spoolway"
+cat > "$app/pages/foo.md" <<'PAGE'
+---
+title: Foo
+source_commit: deadbeef
+---
+
+Cites `file.txt`.
+PAGE
+git -C "$app" add pages/foo.md
+git -C "$app" commit -q -m "docs(pages): add foo"
+head=$(git -C "$app" rev-parse HEAD)
+# A gate that speaks the contract: the page's pin is off history, and one real path changed.
+cat > "$app/gate.sh" <<'GATE'
+#!/usr/bin/env bash
+printf 'foo\tdeadbeef\tfalse\t\tfile.txt\tbranch\tn/a\n'
+exit 1
+GATE
+chmod +x "$app/gate.sh"
+printf 'PAGES_DIR=pages\nPAGES_GATE=%s/gate.sh\n' "$app" > "$app/.spoolway/companion.env"
+mkdir -p "$work/scratch/t1"
+printf 'foo | holds | %s | the page still says what file.txt does\n' "$head" > "$work/scratch/t1/stale-pages.md"
+make_task checks
+run pins.sh check
+check "pins.sh reads a record's changed field, never its off-history flag, as the cited path" \
+  '[ $rc -eq 0 ] && grep -q -- "-- file.txt" "$work/out" && ! grep -q "not in history" "$work/out"' \
+  "rc=$rc $(cat "$work/out" "$work/err")"
+
+# An off-history record that names no path: the flag is a field, never a cited path.
+cat > "$app/gate.sh" <<'GATE'
+#!/usr/bin/env bash
+printf 'foo\tdeadbeef\tfalse\t\t\tbranch\tn/a\n'
+exit 1
+GATE
+chmod +x "$app/gate.sh"
+run pins.sh check
+check "an off-history record with no changed path is never read as one" \
+  '[ $rc -ne 0 ] && ! grep -q "git diff .* -- " "$work/out" "$work/err" && grep -q "not in history" "$work/err"' \
+  "rc=$rc $(cat "$work/out" "$work/err")"
+
+# A red the base carries: reported, and this branch owes nothing.
+cat > "$app/gate.sh" <<'GATE'
+#!/usr/bin/env bash
+printf 'foo\tdeadbeef\tfalse\t\tfile.txt\tbase\tn/a\n'
+exit 1
+GATE
+chmod +x "$app/gate.sh"
+run pins.sh check
+check "pins.sh reports a base-owed red without blocking" \
+  '[ $rc -eq 0 ] && grep -q "red from the base, not this branch" "$work/out"' \
+  "rc=$rc $(cat "$work/out" "$work/err")"
+rm -rf "$app/.spoolway" "$app/pages" "$work/scratch"
 
 # --- collect.sh (shipped; the last step, no on_fail, so a failure parks every task) ------------
 

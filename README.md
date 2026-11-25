@@ -112,7 +112,7 @@ each, the three-tier rule behind them and how `companion.env` is read are in
 | Key | Read by | Meaning |
 |---|---|---|
 | `PAGES_DIR` | `pins.sh`, the prompts | a directory of pages that cite code and carry pins; unset means no page step runs and `pins.sh` passes at once |
-| `PAGES_GATE` | `pins.sh` | the command that names stale pages (default `scripts/gates/run.sh stale-pages`) |
+| `PAGES_GATE` | `pins.sh` | the command that emits the drift record contract (default `scripts/gates/run.sh stale-pages`); a repo with no wiki names `scripts/spoolway/stale-pages-stub.sh` |
 | `PAGES_LOG`, `PAGES_COMPILE_PATTERN` | `pins.sh` | the log a page compile writes, and the pattern of its entry; no log means no check that a page was compiled, not edited by hand |
 | `PAGES_COMMIT_PREFIX` | `pins.sh` | the subject prefix of the pin commit |
 | `PIN_DRIFT_PROTECTED` | `hooks/pin-drift` | the path writes are denied under while the install differs from the lock; unset means no denial |
