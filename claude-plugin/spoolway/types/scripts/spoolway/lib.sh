@@ -261,6 +261,62 @@ branch_base() {
   [ -n "$best" ] && echo "$best"
 }
 
+# merge_conflicts <root> <ref>: tries to merge <ref> into the checkout's HEAD without touching the
+# worktree. If it conflicts, sets `conflict_tree` to the tree git would write and `conflict_files`
+# to the conflicted paths, and returns 0. Returns 1 when the merge is clean. Returns 2, with an
+# ENVIRONMENT line, when git cannot run the merge at all.
+merge_conflicts() {
+  local root=$1 ref=$2 out rc
+  conflict_tree= conflict_files=()
+  out=$(git -C "$root" merge-tree --write-tree --name-only HEAD "$ref" 2> /dev/null) && rc=0 || rc=$?
+  case $rc in
+    0) return 1 ;;
+    1) ;;
+    *) echo "ENVIRONMENT: git merge-tree could not merge $ref into HEAD (exit $rc)" >&2; return 2 ;;
+  esac
+  conflict_tree=$(printf '%s\n' "$out" | head -n 1)
+  mapfile -t conflict_files < <(printf '%s\n' "$out" | tail -n +2 | awk 'NF == 0 { exit } { print }')
+  return 0
+}
+
+# conflict_hunks_are_pins: stdin is a file with git conflict markers; succeeds when each conflict
+# hunk's two sides are equal once the `verified_commit:` and `verified:` lines are taken out, so the
+# only lines the two sides disagree on are pin lines.
+conflict_hunks_are_pins() {
+  awk '
+    function pin(line) { return line ~ /^verified_commit:/ || line ~ /^verified:/ }
+    /^<<<<<<</ { ours = ""; theirs = ""; in_ours = 1; in_theirs = 0; next }
+    in_ours && /^=======$/ { in_ours = 0; in_theirs = 1; next }
+    in_theirs && /^>>>>>>>/ { if (ours != theirs) bad = 1; in_theirs = 0; next }
+    in_ours { if (!pin($0)) ours = ours $0 "\n"; next }
+    in_theirs { if (!pin($0)) theirs = theirs $0 "\n"; next }
+    END { exit bad }
+  '
+}
+
+# conflicts_only_pins <root> <tree> <ref> <path>...: succeeds when every conflicted path is a page
+# (one `.md` directly under PAGES_DIR) that exists on both sides and every one of its conflict
+# hunks differs only in the `verified_commit:` and `verified:` frontmatter lines. It is how a
+# conflict is told apart from one a person has to resolve.
+conflicts_only_pins() {
+  local root=$1 tree=$2 ref=$3; shift 3
+  local pages_dir rest path
+  pages_dir=$(companion_env PAGES_DIR)
+  pages_dir=${pages_dir#./}
+  pages_dir=${pages_dir%/}
+  [ -n "$pages_dir" ] || return 1
+  [ $# -gt 0 ] || return 1
+  for path in "$@"; do
+    rest=${path#"$pages_dir"/}
+    [ "$rest" != "$path" ] || return 1
+    case $rest in */* | "") return 1 ;; *.md) ;; *) return 1 ;; esac
+    git -C "$root" cat-file -e "HEAD:$path" 2> /dev/null || return 1
+    git -C "$root" cat-file -e "$ref:$path" 2> /dev/null || return 1
+    git -C "$root" show "$tree:$path" 2> /dev/null | conflict_hunks_are_pins || return 1
+  done
+  return 0
+}
+
 # no_arguments <step> [<argument>...]: for a command step's script that defines no argument
 # Exits 64 on any: `--help` handed to one of these used to run the step.
 no_arguments() {
