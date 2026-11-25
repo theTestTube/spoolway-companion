@@ -107,6 +107,10 @@ check "report files through run-report.sh and writes no findings" \
   'grep -qF "scripts/spoolway/run-report.sh file" "$report" && grep -qF "run no \`findings.sh\`" "$report"'
 check "intake reads the public participant repository and the relayed issues, and writes participants.md by reference" \
   'grep -qF "relayed" "$intake" && grep -qF "participants.md" "$intake" && grep -qF "are not counted in \`received:\`" "$intake" && grep -qF "Never write a participant" "$intake"'
+check "intake lists every open pull request of the project's repositories, with the five things the digest needs" \
+  'grep -qF "gh pr list --repo <owner/repo> --state open" "$intake" && grep -qF "docs/agents/projects.md" "$intake" && grep -qF "pulls.md" "$intake" && grep -qF "open <age>, merge state <state>, last activity <when>, behind <the task or issue, or none>, waits on <what it waits on>" "$intake"'
+check "intake counts no pull request as an input and writes on none" \
+  'grep -qF "Pull requests are not groups and not inputs" "$intake" && grep -qF "Never comment on, review, label, close or merge a pull request" "$intake"'
 check "route answers participants through feeding-back.sh reply under the relay rule" \
   'grep -qF "scripts/spoolway/feeding-back.sh reply" "$route" && grep -qF "AI-generated disclaimer" "$route" && grep -qF "Never post on a \`relayed\` issue" "$route"'
 check "no prompt carries a closing keyword before an issue" \
@@ -208,6 +212,8 @@ cat > "$scratch/route.md" <<LEDGER
 - reason: no evidence
 LEDGER
 printf 'received: 6\n' > "$scratch/intake.md"
+PULLS=https://github.com/example/project/pull/61
+printf -- "- example/project#61 (%s): open 3 weeks, merge state mergeable clean, last activity 2026-10-01, behind task/route-participants, part of #52, waits on a person's merge\n" "$PULLS" > "$scratch/pulls.md"
 run feeding-back.sh apply
 check "apply: a restatement of #346 is merged as a comment on it, not opened again" \
   '[ $rc -eq 0 ] && grep -qE "^gh issue comment 346 --repo example/app " "$CALLS" && ! grep "issue create" "$CALLS" | grep -q 346' "rc=$rc $(cat "$work/err") $(cat "$CALLS")"
@@ -226,10 +232,11 @@ sed -i 's/^stage: route$/stage: counts/' "$task"
 run feeding-back.sh counts
 check "counts: the digest gets one comment with received, routed, merged and dropped" \
   '[ $rc -eq 0 ] && grep -qE "^gh issue comment $digest " "$CALLS" && b=$(ls -t "$BODY_DIR"/*.md | head -1) && grep -qx -- "- Received: 6" "$b" && grep -qx -- "- Routed: 3" "$b" && grep -qx -- "- Merged into an existing issue: 2" "$b" && grep -qx -- "- Dropped: 1" "$b" && grep -q "spoolway-feeding-back: r1" "$b"' "rc=$rc $(cat "$work/err") $(cat "$CALLS")"
+check "counts: the digest carries every open pull request intake listed, with what each waits on" \
+  '[ $rc -eq 0 ] && b=$(ls -t "$BODY_DIR"/*.md | head -1) && grep -q -- "^Open pull requests of the project" "$b" && grep -qF -- "$(cat "$scratch/pulls.md")" "$b"' "rc=$rc $(cat "$work/err") $(ls "$BODY_DIR")"
 before=$(grep -c "issue comment" "$CALLS")
 run feeding-back.sh counts
 check "counts: a second call for the same run posts nothing more" '[ $rc -eq 0 ] && [ "$(grep -c "issue comment" "$CALLS")" = "$before" ] && grep -q "already posted" "$work/out"'
-
 # The architecture step's file, built from the shape its prompt shows, and fed to apply: a group
 # marked `architecture: yes` carries the summary and the report's name, one marked `no` does not.
 make_task route
