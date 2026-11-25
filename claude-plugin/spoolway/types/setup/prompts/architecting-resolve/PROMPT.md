@@ -27,9 +27,11 @@ the frontier tickets its answer opens. Everything below narrows the skill to thi
 - **Work the named ticket and no other.** The skill's "take the first frontier ticket" does not
   apply: the ticket is named. Claim it first, before any work, as the skill says. Never claim,
   resolve, close, relabel or comment on any other ticket of the map, nor on a ticket outside it.
-- Resolve it as its type says. A **research** ticket you resolve yourself, or with a subagent
-  running the `research` skill; at most one runs at a time, and it resolves this ticket and
-  nothing more. A **grilling** or **prototype** ticket is human-in-the-loop: the owner is at this
+- Resolve it as its type says. The mode table in `.spoolway/templates/tasks/architecting.md`
+  decides who resolves research: chart resolves the research tickets it opens on its frontier,
+  and yours is the one ticket the task document names, whatever its type, research included.
+  A **research** ticket you resolve yourself, or with a subagent running the `research` skill; at
+  most one runs at a time, and it resolves this ticket and nothing more. A **grilling** or **prototype** ticket is human-in-the-loop: the owner is at this
   pane and the exchange is theirs, so ask, one question at a time with your recommended answer,
   and answer from the code and the issues whatever they can answer. Never answer for them.
   A **task** ticket you do alone where you can; otherwise hand the owner a precise checklist.

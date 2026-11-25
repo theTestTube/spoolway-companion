@@ -82,13 +82,22 @@ check "the template names a draft's own id and group, and why two drafts may not
 
 chart="$types/prompts/architecting-chart/PROMPT.md"
 report="$types/prompts/architecting-report/PROMPT.md"
+tpl="$types/templates/tasks/architecting.md"
 check "chart caps research at 4 subagents at once" 'grep -qF "at most 4 subagents at once" "$chart"'
+check "the template states the mode table once, and who resolves research" \
+  'grep -qF "The mode table, the one statement of which mode owns research ticket resolution" "$tpl" && grep -qF "| chart | the map, and the tickets it opens" "$tpl" && grep -qF "the research tickets it opens on its frontier" "$tpl" && grep -qF "| resolve | the one ticket the task document names" "$tpl" && grep -qF "| spec | nothing: it cites the map" "$tpl"'
+check "the template's chart non-goal follows from the mode table" \
+  'grep -qF "resolving any ticket but a research ticket it opened on its frontier" "$tpl" && ! grep -qF "resolving a ticket of the map, which is a resolve-mode task" "$tpl"'
+check "chart owns the research tickets it opens and its Never line allows them" \
+  "grep -qF \"Research is chart's own work\" \"\$chart\" && grep -qF \"its answer is a comment on it\" \"\$chart\" && grep -qF \"Never resolve, close or comment on a ticket of the map but the research tickets this chart\" \"\$chart\" && ! grep -qF \"Never resolve a ticket of the map yourself\" \"\$chart\""
 check "chart drafts into pending/ and queues none" 'grep -q "pending/" "$chart" && grep -qF "Queue nothing" "$chart" && grep -qF "Never queue a task" "$chart"'
 check "chart copies base: from the task file onto every draft" 'grep -qF "copied from the \`base:\` in this running task" "$chart"'
 check "chart drafts one Architecting resolve-mode task per new frontier ticket" 'grep -qF "one Architecting task document (resolve mode)" "$chart"'
 check "chart hands a repository edit off as a draft Developing task" \
   'grep -qF "draft a **Developing** task document" "$chart" && grep -qF "pipeline: developing" "$chart" && grep -qF "close_on_merge: true" "$chart" && grep -qF "group_description" "$chart"'
 resolve="$types/prompts/architecting-resolve/PROMPT.md"
+check "resolve cites the mode table and resolves the named ticket whatever its type" \
+  'grep -qF "mode table in" "$resolve" && grep -qF "whatever its type" "$resolve"'
 check "resolve hands a repository edit off as a draft Developing task and keeps its claim" \
   'grep -qF "draft a **Developing** task document" "$resolve" && grep -qF "pipeline: developing" "$resolve" && grep -qF "keep your claim, close" "$resolve" && grep -qF "write no Decisions-so-far line" "$resolve"'
 check "resolve and chart still forbid edit, commit and push" \
@@ -121,6 +130,8 @@ check "artifact blocks on a refused publish instead of retrying another way" 'gr
 check "the template's Non-goals and ACs carry the overview page" \
   'grep -qF "overview page beyond its private link" "$types/templates/tasks/architecting.md" && grep -qF "overview page is private and in English" "$types/templates/tasks/architecting.md"'
 spec="$types/prompts/architecting-spec/PROMPT.md"
+check "spec cites the mode table and resolves none" \
+  'grep -qF "the mode table in" "$spec" && grep -qF "You own no ticket and resolve none" "$spec"'
 check "spec passes at once when skip_steps names it" 'grep -qF "if it names \`spec\`" "$spec"'
 check "spec builds only from Decisions so far and the closed tickets, not a conversation" \
   'grep -qF "Decisions so far" "$spec" && grep -qF "resolution comment" "$spec" && grep -qF "Nothing from this conversation" "$spec"'
