@@ -77,6 +77,8 @@ for f in pipelines/architecting.yml prompts/architecting-recall/PROMPT.md prompt
   prompts/architecting-resolve/PROMPT.md prompts/architecting-spec/PROMPT.md prompts/architecting-report/PROMPT.md prompts/architecting-artifact/PROMPT.md templates/tasks/architecting.md; do
   check "types.manifest lists .spoolway/$f" 'cut -f2 "$real/types.manifest" | grep -qxF ".spoolway/$f"'
 done
+check "the template names a draft's own id and group, and why two drafts may not share a group" \
+  'grep -qF "id: <the drafted task" "$types/templates/tasks/architecting.md" && grep -qF "group: <the chain the drafted task is on>" "$types/templates/tasks/architecting.md" && grep -qF "never the running task" "$types/templates/tasks/architecting.md" && grep -qF "name no depends_on are refused" "$types/templates/tasks/architecting.md"'
 
 chart="$types/prompts/architecting-chart/PROMPT.md"
 report="$types/prompts/architecting-report/PROMPT.md"
