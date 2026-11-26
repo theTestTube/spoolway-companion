@@ -287,6 +287,14 @@ acknowledgement with the AI-generated disclaimer on a public issue, labels and n
 `counts` refuse to run when a line of a participant issue's body appears in a ledger or in a body
 they would post, so no participant text reaches a finding, a routed issue, the counts or the log.
 
+Open pull requests are summarised on the digest (version 1.4): `intake` lists every open pull
+request of the project's repositories, those `docs/agents/projects.md` names and the digest's
+repository without that file, in `pulls.md`, each with its age, merge state, last activity, the task
+or issue behind it and what it waits on. `feeding-back.sh counts` appends the list to its comment
+on the digest, so a pull request nobody has touched for months surfaces in the weekly batch. A pull
+request is not a finding: it is counted in neither `received:` nor the route, and no lane writes on
+one.
+
 What queues the batch is a job in the machine's jobs file, never tracked
 (`~/.spoolway/<project>/jobs.toml`; `timeout 30 spoolway jobs contract < /dev/null` prints the
 format). A person writes it from the jobs screen for this project:

@@ -3,6 +3,8 @@ An Architecting task is bound to an idea issue in chart mode, to one open ticket
 resolve mode, or to a map whose tickets are closed in spec mode, and that issue outlives the task. The frontmatter must carry
 
   pipeline: architecting
+  id: <the drafted task's own name>                   starts with a lowercase letter, holds only lowercase letters, digits and hyphens, and is unique among the drafts: never the running task's own id
+  group: <the chain the drafted task is on>           a drafted task's own, never the running task's: a group is one dependency chain, so two drafts that share one group and name no depends_on are refused
   ticket: https://github.com/<owner>/<repo>/issues/<n>   the idea issue in chart mode, the one map ticket in resolve mode, the map in spec mode, as a full URL
   base: <the repository's default branch>               copy it from the running task's own base:; a task with no base is refused
   close_on_merge: false                                  the map is bound without the close-on-merge label
