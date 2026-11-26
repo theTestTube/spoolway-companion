@@ -10,6 +10,15 @@ resolve mode, or to a map whose tickets are closed in spec mode, and that issue 
   close_on_merge: false                                  the map is bound without the close-on-merge label
   skip_steps: [...]                                      picks the mode: [resolve, spec] is chart mode, [chart, spec, artifact] is resolve mode, [recall, chart, resolve] is spec mode
 
+The mode table, the one statement of which mode owns research ticket resolution. The chart and
+resolve prompts cite it, and the Non-goals below follow from it:
+
+| mode | owns | resolves | research subagents |
+|---|---|---|---|
+| chart | the map, and the tickets it opens that it can specify, research or not | the research tickets it opens on its frontier, each closed with its resolution comment | at most 4 at once |
+| resolve | the one ticket the task document names | that ticket, whatever its type | 1 at a time |
+| spec | nothing: it cites the map's closed tickets | none; it reads their resolution comments | none |
+
 The body below is written per mode: each [[...]] marked chart, resolve or spec is kept for that
 mode only, and the other modes' lines are deleted.
 
@@ -34,7 +43,7 @@ so this is where its ground goes: facts and names, not argument.
 
 Out of scope. Doing any of these is a review failure, not a bonus.
 
-- [[chart mode: resolving a ticket of the map, which is a resolve-mode task's work]]
+- [[chart mode: resolving any ticket but a research ticket it opened on its frontier — a resolve-mode task's work otherwise]]
 - [[resolve mode: resolving, closing or commenting on any other ticket of the map]]
 - queueing a draft task: a person sends the drafts from the queue screen
 - [[chart and spec modes: sharing or publishing the map's overview page beyond its private link, or putting anything on it the tickets do not say]]

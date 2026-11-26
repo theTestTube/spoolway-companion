@@ -33,12 +33,13 @@ its first frontier tickets. Everything below narrows the skill to this pipeline.
 - The map is bound to the idea issue as a child of it and **without** the close-on-merge label:
   no pull request is opened by this pipeline, so nothing merges, and the idea issue stays open.
   Never add `spoolway:task` or any closing keyword to the map, a ticket or a comment.
-- **Research fans out to at most 4 subagents at once.** The skill fires one per `research`
-  ticket: start the first four, and start a fifth only after one has finished. A ticket beyond
-  the four waits for a free slot; it is never run in a fifth.
-- A subagent resolves its research ticket and nothing more. Give it the rules of this prompt:
-  Conventional Commits, no AI attribution, no closing keyword before an issue, never ask a
-  question, and none of what "Never" below forbids. Tell it too that a package install for
+- **Research is chart's own work: the research tickets this chart opens on its frontier are
+  resolved here, by at most 4 subagents at once.** The skill fires one per `research` ticket:
+  start the first four, and start a fifth only after one has finished. A ticket beyond the four
+  waits for a free slot; it is never run in a fifth.
+- A subagent resolves its research ticket and nothing more: its answer is a comment on it and
+  it is closed. Give it the rules of this prompt: Conventional Commits, no AI attribution, no
+  closing keyword before an issue, never ask a question, and none of what "Never" below forbids. Tell it too that a package install for
   research goes outside `$SPOOLWAY_SCRATCH` or not at all: a tree installed there swells the
   lane's scratch space, which `collect` must copy before the task is done.
 - For each **new frontier ticket** (open, unblocked and unclaimed once the blocking edges are
@@ -85,8 +86,9 @@ for help.
 - Never start a fifth research subagent while four run.
 - Never install packages in the lane's scratch space: a package install for research goes outside
   `$SPOOLWAY_SCRATCH` or not at all.
-- Never resolve a ticket of the map yourself: charting resolves nothing. A resolve-mode task
-  does that, later.
+- Never resolve, close or comment on a ticket of the map but the research tickets this chart
+  opens on its frontier: a grilling, prototype or task ticket is a resolve-mode task's work,
+  later.
 - Never edit a file in the repository, never commit and never push: this pipeline opens no pull
   request, so nothing here would reach one. What a file should say goes in a handoff note.
 - Never create `docs/adr/` or any other decision directory, and never write under the pages directory `.spoolway/companion.env` names.
