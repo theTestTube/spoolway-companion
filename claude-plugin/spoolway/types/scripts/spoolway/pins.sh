@@ -428,33 +428,71 @@ push() {
   fi
 }
 
+# merge_origin_base: when the base branch's remote moved and merging it into HEAD conflicts only
+# in the pages' pin lines, merges it, keeping this branch's pins, so the pull request is
+# mergeable again. A merge only happens on a conflict: a base that is behind but clean is left
+# alone. Sets `merged=1` when it merged. Any other conflict fails the step: a person resolves it.
+merge_origin_base() {
+  local origin_branch ref rc
+  merged=0
+  origin_branch=$(task_starts_from "$task_file")
+  origin_branch=${origin_branch:-$(task_base "$task_file")}
+  ref=origin/$origin_branch
+  git rev-parse -q --verify "$ref" > /dev/null || return 0
+  rc=0
+  merge_conflicts "$root" "$ref" || rc=$?
+  if [ "$rc" -eq 1 ]; then return 0; fi
+  [ "$rc" -eq 0 ] || exit 1
+  if ! conflicts_only_pins "$root" "$conflict_tree" "$ref" "${conflict_files[@]}"; then
+    echo "pin: merging $ref conflicts in more than the pages' pin lines; a person resolves it, then resumes:" >&2
+    printf '  %s\n' "${conflict_files[@]}" >&2
+    exit 1
+  fi
+  if ! git merge --no-edit -X ours "$ref" > /dev/null 2>&1; then
+    echo "pin: merging $ref into $branch failed; nothing was pinned. Look at the worktree, then run the step again" >&2
+    exit 1
+  fi
+  merged=1
+  echo "pin: merged $ref, keeping this branch's pins"
+}
+
+merge_origin_base
+
+# The base moved forward with the merge, so the pin and the squashed commit are read against it
+# again. `branch_base` takes the nearest base, and the merge made the remote's tip an ancestor.
+if ! base=$(branch_base "$root" "$task_file") || [ -z "$base" ]; then
+  echo "ENVIRONMENT: pin: the branch this task was cut from resolves to no ref here; the stale-pages gate has no base to diff against" >&2
+  exit 1
+fi
+
+# A merge commit is not the handover's squashed commit, so it needs its own branch below: the pin
+# belongs on the merge commit (it carries the merged state), never on the pin commit that follows.
+tip_parents=$(git rev-list --parents -n1 HEAD | wc -w)
 mapfile -t commits < <(git rev-list --reverse "$base..HEAD")
-squashed=${commits[0]:-}
-case ${#commits[@]} in
-  0)
-    echo "pin: the branch holds no commit of its own; there is nothing to pin to" >&2
+if [ "${#commits[@]}" -eq 0 ]; then
+  echo "pin: the branch holds no commit of its own; there is nothing to pin to" >&2
+  exit 1
+fi
+target=${commits[0]}
+if [ "$tip_parents" -ge 3 ]; then target=$(git rev-parse HEAD); fi
+
+if [ "$tip_parents" -eq 2 ] && [ "${#commits[@]}" -ge 2 ] && only_pins "$(git rev-parse HEAD~1)" HEAD; then
+  # A second run of this step: the pin commit is there already. Check it and push it.
+  gate "$scope"
+  gate_summary
+  if [ "$gate_rc" -ne 0 ]; then
+    echo "pin: the branch already carries a pin commit and the gate is still RED" >&2
     exit 1
-    ;;
-  1) ;;
-  2)
-    # A second run of this step: the pin commit is there already. Check it and push it.
-    only_pins "$squashed" HEAD || exit 1
-    gate "$scope"
-    gate_summary
-    if [ "$gate_rc" -ne 0 ]; then
-      echo "pin: the branch already carries a pin commit and the gate is still RED" >&2
-      exit 1
-    fi
-    push
-    echo "pin: the pin commit $(git rev-parse --short HEAD) was already on the branch; pushed"
-    full_gate
-    exit 0
-    ;;
-  *)
-    echo "pin: the branch holds ${#commits[@]} commits where the handover leaves one; nothing was pinned" >&2
-    exit 1
-    ;;
-esac
+  fi
+  push
+  echo "pin: the pin commit $(git rev-parse --short HEAD) was already on the branch; pushed"
+  full_gate
+  exit 0
+fi
+if [ "$tip_parents" -eq 2 ] && [ "${#commits[@]}" -ge 2 ]; then
+  echo "pin: the branch holds ${#commits[@]} commits where the handover leaves one; nothing was pinned" >&2
+  exit 1
+fi
 
 restore() { git checkout -q -- "$PAGES_DIR"; }
 trap 'restore' ERR
@@ -497,7 +535,7 @@ if [ "$refused" -gt 0 ]; then
 fi
 
 for page in "${pages[@]}"; do
-  set_pins "$page" "verified_commit: $squashed" "verified: $(date +%F)"
+  set_pins "$page" "verified_commit: $target" "verified: $(date +%F)"
 done
 mapfile -t moved < <(git diff --name-only -- "$PAGES_DIR")
 if [ "${#moved[@]}" -eq 0 ]; then
@@ -521,7 +559,7 @@ fi
 slugs=$(printf '%s\n' "${moved[@]}" | sed -E 's#.*/([^/]+)\.md$#- \1#')
 audited=", each one audited by the review step"
 [ "$scope" = all ] && audited=" by the document step"
-if ! git commit -q -m "$PAGES_COMMIT_PREFIX move the drift pin of ${#moved[@]} page(s) to ${squashed:0:7}" \
+if ! git commit -q -m "$PAGES_COMMIT_PREFIX move the drift pin of ${#moved[@]} page(s) to ${target:0:7}" \
   -m "Read against the change and declared still holding$audited; a pin the squashed commit carried is put back where the base has it:
 $slugs" -- "${moved[@]}"; then
   restore
@@ -529,10 +567,14 @@ $slugs" -- "${moved[@]}"; then
   exit 1
 fi
 trap - ERR
-if [ "$(git rev-parse HEAD~1)" != "$squashed" ] || ! only_pins "$squashed" HEAD; then
-  echo "pin: the commit just made is not a pin commit on $squashed; nothing was pushed" >&2
+if [ "$(git rev-parse HEAD~1)" != "$target" ] || ! only_pins "$target" HEAD; then
+  echo "pin: the commit just made is not a pin commit on $target; nothing was pushed" >&2
+  exit 1
+fi
+if [ "${merged:-0}" = 1 ] && ! bash "$here/pins.sh" check "$scope"; then
+  echo "pin: pins.sh check failed after merging the base; nothing was pushed. Read the pages it names, then run the step again" >&2
   exit 1
 fi
 push
-echo "pin: ${#moved[@]} page(s) pinned or put back, ${#pages[@]} to $squashed, in $(git rev-parse --short HEAD), pushed to $branch"
+echo "pin: ${#moved[@]} page(s) pinned or put back, ${#pages[@]} to $target, in $(git rev-parse --short HEAD), pushed to $branch"
 full_gate
