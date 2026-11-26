@@ -17,6 +17,12 @@
 # every one of them, and `file` decides nothing: it opens what `signals` left, or an urgent
 # finding the lane names, the one signal that is a lane's judgment.
 #
+# A repaired-lap run is not a spent loop. `signals` runs only after the final `review` passed, so
+# every return to `implement` was repaired by the lap that followed it, and a loop that did not
+# repair blocks before reaching here. Such a run raises neither the `arrivals at implement`
+# signal nor the spend-above-median signal, which its extra laps inflate; `blocks` measures the
+# loop that did not repair. The other signals are unchanged.
+#
 # Only `signals` and `file` need a task: they exit 64 when SPOOLWAY_TASK_FILE names none.
 #
 # Exit codes of `file`: 0 filed, already filed, or nothing to file; 2 the tracker refused.
@@ -158,11 +164,16 @@ signals() {
   if at_least "$touched" "$blocks"; then row "task touched \`blocked\`" "$touched" "≥ $blocks" yes
   else row "task touched \`blocked\`" "$touched" "≥ $blocks" no; fi
 
-  # 2. The loop was spent: arrivals at `implement`, the first included.
-  local arrived
+  # 2. The loop on `implement`, the first pass included. A run that arrived more than once passed
+  #    the review after every return, so each later lap repaired the findings it was sent back
+  #    for: it was not a spent loop, and neither its arrivals nor the spend its extra laps inflate
+  #    is a signal. A loop that did not repair blocks, which `blocks` counts.
+  local arrived repaired=no
   arrived=$(frontmatter_map_value "$task_file" arrivals implement)
   arrived=${arrived:-0}
-  if at_least "$arrived" "$arrivals"; then row "arrivals at \`implement\`" "$arrived" "≥ $arrivals" yes
+  if at_least "$arrived" 2; then repaired=yes; fi
+  if [ "$repaired" = yes ]; then row "arrivals at \`implement\`" "$arrived, every later lap repaired" "≥ $arrivals" no
+  elif at_least "$arrived" "$arrivals"; then row "arrivals at \`implement\`" "$arrived" "≥ $arrivals" yes
   else row "arrivals at \`implement\`" "$arrived" "≥ $arrivals" no; fi
 
   # 3. A check failed for an environment reason: `ENVIRONMENT:` lines in the checks step's log.
@@ -192,7 +203,8 @@ signals() {
     prior=${stats% *}
     median=${stats#* }
     local what="spend against the median of $pipeline $version" bar="> $spend_x × median, from $spend_min earlier runs"
-    if ! at_least "$prior" "$spend_min"; then row "$what" "$cost, $prior earlier runs" "$bar" no
+    if [ "$repaired" = yes ]; then row "$what" "$cost, a repaired-lap run" "$bar" no
+    elif ! at_least "$prior" "$spend_min"; then row "$what" "$cost, $prior earlier runs" "$bar" no
     elif above "$cost" "$(awk -v m="$median" -v x="$spend_x" 'BEGIN { print m * x }')"; then row "$what" "$cost, median $median over $prior" "$bar" yes
     else row "$what" "$cost, median $median over $prior" "$bar" no; fi
   fi

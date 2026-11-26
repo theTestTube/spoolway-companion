@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Offline test for the shipped run-report.sh and findings.sh: a crossed
-# threshold files one run report per run, none crossed files nothing, a finding without evidence is
+# threshold files one run report per run, none crossed files nothing, a run whose later laps
+# repaired the earlier findings crosses nothing, a finding without evidence is
 # dropped, a sixth is cut, and no open digest exits 3. `gh` and `spoolway` are fakes on PATH that
 # record their calls; nothing reaches GitHub or the network.
 # Usage: tests/spoolway-findings.test.sh (needs bash, jq and awk)
@@ -28,7 +29,7 @@ cat > "$work/bin/spoolway" <<'FAKE'
 #!/bin/sh
 echo "spoolway $*" >> "$CALLS"
 case "$*" in
-  *" eval "*) echo '{"rows":[{"run":"r1","blocks":0,"cost_usd":1,"pipeline_version":"1"}]}' ;;
+  *" eval "*) if [ -n "${LEDGER:-}" ]; then cat "$LEDGER"; else echo '{"rows":[{"run":"r1","blocks":0,"cost_usd":1,"pipeline_version":"1"}]}'; fi ;;
   *" doctor "*) echo "{\"problems\":${DOCTOR_PROBLEMS:-0}}" ;;
 esac
 exit 0
@@ -75,9 +76,39 @@ check "signals: none crossed leaves no verdict" '[ $rc -eq 0 ] && grep -q "no si
 run run-report.sh file
 check "file: none crossed files nothing" '[ $rc -eq 0 ] && ! grep -q "issue create" "$CALLS"' "rc=$rc $(cat "$work/err")"
 
-make_task signals "arrivals:" "  implement: 3"
+make_task signals "arrivals:" "  blocked: 1"
 run run-report.sh signals "${thresholds[@]}"
 check "signals: a crossed threshold leaves a verdict" '[ $rc -eq 0 ] && [ -s "$scratch/run-report.r1.md" ]' "rc=$rc $(cat "$work/err")"
+
+# A run that arrived at `implement` more than once repaired every return: `signals` ran only after
+# the final `review` passed. Such a run's arrivals are no signal, and the block signal still is.
+make_task signals "arrivals:" "  implement: 3"
+run run-report.sh signals "${thresholds[@]}"
+check "signals: a run whose later laps repaired the earlier findings files nothing" \
+  '[ $rc -eq 0 ] && grep -q "no signal crossed" "$work/out" && ! ls "$scratch"/run-report.r1.md 2>/dev/null' "rc=$rc $(cat "$work/err")"
+make_task signals "arrivals:" "  implement: 2"
+run run-report.sh signals "${thresholds[@]}"
+check "signals: one repaired return lap files nothing" \
+  '[ $rc -eq 0 ] && grep -q "no signal crossed" "$work/out" && ! ls "$scratch"/run-report.r1.md 2>/dev/null' "rc=$rc $(cat "$work/err")"
+make_task signals "arrivals:" "  implement: 3" "  blocked: 1"
+run run-report.sh signals "${thresholds[@]}"
+check "signals: a block still files when the later laps repaired the earlier findings" \
+  '[ $rc -eq 0 ] && [ -s "$scratch/run-report.r1.md" ] && grep -q "task touched" "$scratch/run-report.r1.md"' "rc=$rc $(cat "$work/err")"
+
+# Spend above the median is quiet too for a repaired-lap run: the extra laps inflate it. Five
+# earlier runs of version 1 cost 1 each; this run cost 10.
+ledger="$work/ledger.json"
+{ printf '{"rows":['
+  for i in 1 2 3 4 5; do printf '{"run":"p%s","blocks":0,"cost_usd":1,"pipeline_version":"1"},' "$i"; done
+  printf '{"run":"r1","blocks":0,"cost_usd":10,"pipeline_version":"1"}]}'; } > "$ledger"
+make_task signals "arrivals:" "  implement: 1"
+LEDGER="$ledger" run run-report.sh signals "${thresholds[@]}"
+check "signals: spend above the median files for a run with no repair lap" \
+  '[ $rc -eq 0 ] && [ -s "$scratch/run-report.r1.md" ] && grep -q "spend against the median" "$scratch/run-report.r1.md"' "rc=$rc $(cat "$work/err")"
+make_task signals "arrivals:" "  implement: 2"
+LEDGER="$ledger" run run-report.sh signals "${thresholds[@]}"
+check "signals: spend above the median files nothing for a repaired-lap run" \
+  '[ $rc -eq 0 ] && grep -q "no signal crossed" "$work/out" && ! ls "$scratch"/run-report.r1.md 2>/dev/null' "rc=$rc $(cat "$work/err")"
 make_task report "arrivals:" "  implement: 3"
 mkdir -p "$scratch"
 printf 'Run `r1`: crossed.\n' > "$scratch/run-report.r1.md"
