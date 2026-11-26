@@ -35,13 +35,16 @@ setup() {
   cat > "$app/gate.sh" <<'GATE'
 #!/bin/sh
 # RED while the page's pin is not a commit that already has the cited code.txt: the real stale-pages
-# verdict, small enough for a fixture.
+# verdict as a record (STALE_PAGES_RECORDS=1), small enough for a fixture.
 red=0
 for p in pages/*.md; do
   [ -f "$p" ] || continue
   slug=$(basename "$p" .md); v=$(sed -n 's/^verified_commit: //p' "$p" | head -1)
   if ! git rev-parse -q --verify "$v^{commit}" > /dev/null 2>&1 || ! git diff --quiet "$v" -- code.txt; then
-    red=1; printf -- '--- stale-pages/%s\n  actual:   changed: code.txt\n  verdict:  RED\n' "$slug"
+    red=1
+    hex=$(printf '%s' "$v" | grep -E '^[0-9a-f]{40}$' || true)
+    hist=false; git rev-parse -q --verify "$v^{commit}" > /dev/null 2>&1 && hist=true
+    printf '%s\t%s\t%s\t\tcode.txt\tbranch\tn/a\n' "$slug" "$hex" "$hist"
   fi
 done
 if [ "$red" = 1 ]; then echo '=== RED'; exit 1; else echo '=== GREEN'; exit 0; fi

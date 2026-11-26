@@ -208,19 +208,31 @@ modes:
 A second argument `all` runs the full gate instead of the branch's scope: Materializing uses
 `check all` and `pin all`, and its `pin` fails unless the full gate ends green.
 
-`PAGES_GATE` is the consumer's command. It reads `STALE_PAGES_SCOPE` (`branch` or the full gate)
-and `STALE_PAGES_BASE` from the environment, and prints one block per check:
+`PAGES_GATE` is the consumer's command. `pins.sh` runs it in records mode, with
+`STALE_PAGES_RECORDS=1` in the environment (`STALE_PAGES_SCOPE=branch`, or unset for the full gate,
+and `STALE_PAGES_BASE` the commit to compare against). It prints one record per page, one line of
+tab-separated fields, and a closing `=== GREEN` or `=== RED` line:
 
 ```text
---- <check name>
-  actual:   <text>
-  verdict:  GREEN|RED
-=== GREEN|RED
+<slug>\t<pin>\t<pin-in-history>\t<deleted>\t<changed>\t<owed-by>\t<compile-proof>
 ```
 
-A red page's `actual:` names `deleted: <path>` or `changed: <path>[; ...]`, optionally followed by
-` (since <commit>)`. The record the lanes write is `stale-pages.md` in the task's scratch space,
-one line per page:
+Each `\t` is a literal tab. The fields are:
+
+- `slug` — the page file name without `.md`.
+- `pin` — the page's 40-hex pin, or empty.
+- `pin-in-history` — `true` or `false`: whether the pin is an ancestor of HEAD. A pin that is not
+  is a field, never a cited path.
+- `deleted`, `changed` — the cited paths deleted or changed since the pin, `;`-separated, empty
+  when none.
+- `owed-by` — `branch` (this branch made the page stale), `base` (only the base carries it:
+  reported, never blocking) or `none` (not stale). A record is RED when `owed-by` is `branch` or
+  `base`, GREEN when it is `none`.
+- `compile-proof` — `yes`, `no` or `n/a`.
+
+A consumer without a wiki names `scripts/spoolway/stale-pages-stub.sh` as `PAGES_GATE`: it answers
+the records mode with an empty page set and GREEN. The record the lanes write is `stale-pages.md`
+in the task's scratch space, one line per page:
 
 ```text
 <page slug> | holds | <commit the page was read at> | <why the page still says what the code does>
