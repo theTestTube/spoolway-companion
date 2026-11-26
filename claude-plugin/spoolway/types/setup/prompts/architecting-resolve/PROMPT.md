@@ -29,9 +29,11 @@ the frontier tickets its answer opens. Everything below narrows the skill to thi
   resolve, close, relabel or comment on any other ticket of the map, nor on a ticket outside it.
 - Resolve it as its type says. A **research** ticket you resolve yourself, or with a subagent
   running the `research` skill; at most one runs at a time, and it resolves this ticket and
-  nothing more. A **grilling** or **prototype** ticket is human-in-the-loop: the owner is at this
-  pane and the exchange is theirs, so ask, one question at a time with your recommended answer,
-  and answer from the code and the issues whatever they can answer. Never answer for them.
+  nothing more. Give it the rules of this prompt, and tell it that a package install for
+  research goes outside `$SPOOLWAY_SCRATCH` or not at all. A **grilling** or **prototype**
+  ticket is human-in-the-loop: the owner is at this pane and the exchange is theirs, so ask,
+  one question at a time with your recommended answer, and answer from the code and the issues
+  whatever they can answer. Never answer for them.
   A **task** ticket you do alone where you can; otherwise hand the owner a precise checklist.
   A **task** ticket whose work changes a tracked file is neither: this lane edits, commits and pushes
   nothing. Hand it off as a draft Developing task (the drafting rule below, applied to this ticket itself),
@@ -99,6 +101,8 @@ for help.
   Write `part of #N` or `leaves #N open`.
 - Never queue a task: no `spoolway queue add`, no `spoolway queue` of any kind that writes.
 - Never run two subagents at once.
+- Never install packages in the lane's scratch space: a package install for research goes outside
+  `$SPOOLWAY_SCRATCH` or not at all.
 - Never edit a file in the repository, never commit and never push: this pipeline opens no pull
   request, so nothing here would reach one. What a file should say goes in a handoff note.
 - Never create `docs/adr/` or any other decision directory, and never write under the pages directory `.spoolway/companion.env` names.
