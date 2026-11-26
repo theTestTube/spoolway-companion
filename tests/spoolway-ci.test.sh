@@ -36,7 +36,15 @@ echo "gh $* (in $PWD)" >> "$CALLS"
 case "$1 $2" in
   "pr list") [ -f .pr ] && cat .pr ;;
   "pr checks") [ -f .checks ] && cat .checks; exit 0 ;;
-  "pr view") if [ -f .head ]; then cat .head; else git rev-parse HEAD; fi ;;
+  "pr view")
+    head=$(if [ -f .head ]; then cat .head; else git rev-parse HEAD; fi)
+    if [ -f .mergeable_seq ]; then
+      mergeable=$(sed -n 1p .mergeable_seq)
+      sed '1d' .mergeable_seq > .mergeable_seq.tmp && mv .mergeable_seq.tmp .mergeable_seq
+    elif [ -f .mergeable ]; then mergeable=$(cat .mergeable); else mergeable=MERGEABLE; fi
+    if [ -f .merge_state ]; then state=$(cat .merge_state); else state=CLEAN; fi
+    printf '{"headRefOid":"%s","mergeable":"%s","mergeStateStatus":"%s"}\n' "$head" "$mergeable" "$state"
+    ;;
 esac
 exit 0
 FAKE
@@ -56,7 +64,7 @@ run() {
     bash scripts/spoolway/ci.sh "$@") > "$work/out" 2> "$work/err"
   rc=$?
 }
-reset() { rm -f "$app/.head" "$app/.pr" "$app/.checks" "$CALLS"; }
+reset() { rm -f "$app/.head" "$app/.pr" "$app/.checks" "$app/.mergeable" "$app/.merge_state" "$app/.mergeable_seq" "$CALLS"; }
 
 green='[{"name":"Gates","bucket":"pass","link":"https://ci/1"},{"name":"Lint","bucket":"skipping","link":"https://ci/2"}]'
 red='[{"name":"Gates","bucket":"pass","link":"https://ci/1"},{"name":"Typecheck","bucket":"fail","link":"https://ci/run/42"}]'
@@ -106,7 +114,8 @@ check "no matching pull request does not read any check" '! grep -q "pr checks" 
 # --- The head of the pull request ---------------------------------------------------------------
 
 reset; make_task ci
-old=$(git -C "$app" rev-parse HEAD~1 2> /dev/null || echo 0000000000000000000000000000000000000000)
+# A commit that exists and is not the worktree's HEAD, without moving the branch.
+old=$(git -C "$app" commit-tree HEAD^{tree} -m "an older head")
 echo https://github.com/o/r/pull/5 > "$app/.pr"; echo "$green" > "$app/.checks"; echo "$old" > "$app/.head"
 run
 check "green checks on an older head do not pass" '[ $rc -eq 1 ]' "rc=$rc $(cat "$work/out")"
@@ -154,6 +163,71 @@ echo change > "$app/f"; git -C "$app" add f; git -C "$app" commit -q -m app
 reset; make_task ci "starts_from: main"
 run
 check "a task that changed this repository and has no pull request fails" '[ $rc -eq 1 ] && grep -q "no open pull request" "$work/err"' "rc=$rc $(cat "$work/err")"
+
+# --- Mergeability beside the checks -----------------------------------------------------------
+
+# A page on main, and a branch that moves its pin while origin/main moves it another way: the two
+# conflict in the pin lines alone. The verdict reads mergeable/mergeStateStatus beside the checks.
+reset
+mkdir -p "$app/.spoolway" "$app/pages"
+printf 'PAGES_DIR=pages\n' > "$app/.spoolway/companion.env"
+git -C "$app" checkout -q main
+printf -- '---\nverified_commit: aaaa\nverified: 2026-01-01\n---\n\nBody.\n' > "$app/pages/example.md"
+git -C "$app" add .spoolway pages
+git -C "$app" commit -q -m "docs(page): add a page"
+git -C "$app" checkout -q -B task/demo main
+mkdir -p "$app/pages"
+printf -- '---\nverified_commit: cccc\nverified: 2026-03-03\n---\n\nBody.\n' > "$app/pages/example.md"
+git -C "$app" add pages
+git -C "$app" commit -q -m "docs(page): the branch's pin"
+git -C "$app" checkout -q main
+printf -- '---\nverified_commit: bbbb\nverified: 2026-02-02\n---\n\nBody.\n' > "$app/pages/example.md"
+git -C "$app" commit -q -am "docs(page): the base's pin"
+git -C "$app" update-ref refs/remotes/origin/main refs/heads/main
+git -C "$app" checkout -q task/demo
+
+make_task ci
+echo https://github.com/o/r/pull/5 > "$app/.pr"; echo "$green" > "$app/.checks"; echo CONFLICTING > "$app/.mergeable"
+WAIT=60 run
+check "a CONFLICTING pull request fails at once, not at the timeout" '[ $rc -eq 1 ] && grep -q "CONFLICTING" "$work/err"' "rc=$rc $(cat "$work/err")"
+check "a pin-lines-only conflict says to resume at pin" \
+  'grep -q "Resume this task at" "$work/err" && grep -q "verified_commit" "$work/err"' "$(cat "$work/err")"
+
+# The mergeable and mergeStateStatus spellings are read together: a DIRTY state alone is a conflict.
+echo DIRTY > "$app/.merge_state"; echo MERGEABLE > "$app/.mergeable"
+WAIT=60 run
+check "a mergeStateStatus of DIRTY alone is a conflict" '[ $rc -eq 1 ] && grep -q "CONFLICTING" "$work/err"' "rc=$rc $(cat "$work/err")"
+
+# A conflict in a file that is not a page: a person resolves it.
+git -C "$app" checkout -q main
+printf 'main change\n' > "$app/other.txt"
+git -C "$app" add other.txt
+git -C "$app" commit -q -m "chore: the base's other file"
+git -C "$app" update-ref refs/remotes/origin/main refs/heads/main
+git -C "$app" checkout -q task/demo
+printf 'branch change\n' > "$app/other.txt"
+git -C "$app" add other.txt
+git -C "$app" commit -q -m "chore: the branch's other file"
+reset; make_task ci
+echo https://github.com/o/r/pull/5 > "$app/.pr"; echo "$green" > "$app/.checks"; echo CONFLICTING > "$app/.mergeable"
+WAIT=60 run
+check "a conflict beyond the pin lines names a person" '[ $rc -eq 1 ] && grep -q "person resolves it" "$work/err" && grep -q "other.txt" "$work/err"' "rc=$rc $(cat "$work/err")"
+
+# UNKNOWN mergeability is pending, not a pass: the step waits until GitHub says MERGEABLE.
+git -C "$app" checkout -q main
+printf -- '---\nverified_commit: dddd\nverified: 2026-04-04\n---\n\nBody.\n' > "$app/pages/example.md"
+git -C "$app" commit -q -am "docs(page): the base's pin again"
+git -C "$app" update-ref refs/remotes/origin/main refs/heads/main
+git -C "$app" checkout -q task/demo
+mkdir -p "$app/pages"
+printf -- '---\nverified_commit: eeee\nverified: 2026-05-05\n---\n\nBody.\n' > "$app/pages/example.md"
+git -C "$app" commit -q -am "docs(page): the branch's pin again"
+reset; make_task ci
+echo https://github.com/o/r/pull/5 > "$app/.pr"; echo "$green" > "$app/.checks"
+printf 'UNKNOWN\nMERGEABLE\n' > "$app/.mergeable_seq"
+WAIT=60 run
+check "an UNKNOWN mergeability is pending until MERGEABLE, then passes" '[ $rc -eq 0 ] && grep -q "every check is green" "$work/out"' "rc=$rc $(cat "$work/err")"
+grep -q "MERGEABLE" "$app/.mergeable_seq" && fail "the UNKNOWN sequence was not polled through"
 
 printf '\n%s failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

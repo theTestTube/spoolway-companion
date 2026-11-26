@@ -21,8 +21,10 @@ synthesizes from a conversation, and you have none.
 
 ## How to do it here
 
-- **Build only from the tracker.** The sources are the map's "Decisions so far" and each closed
-  ticket's resolution comment. Nothing from this conversation, from session history, from memory
+- **Build only from the tracker.** You own no ticket and resolve none: the mode table in
+  `.spoolway/templates/tasks/architecting.md` gives spec mode the map's closed tickets to cite and
+  nothing to resolve. The sources are the map's "Decisions so far" and each closed ticket's
+  resolution comment. Nothing from this conversation, from session history, from memory
   or from your own opinion is a decision. Where the tickets say nothing, the spec says nothing: put
   the gap under Further Notes.
 - **Block, and say which, when a ticket the spec needs is still open**, or when the map's

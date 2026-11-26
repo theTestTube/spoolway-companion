@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Offline test for the materializing-* script templates under claude-plugin/templates/: each one
-# copied into a consumer made here, beside the types' lib.sh, and run as the dispatcher runs it.
+# Offline test for the materializing-* scripts under the plugin's types
+# (claude-plugin/spoolway/types/scripts/spoolway/): each one copied into a consumer made here,
+# beside the types' lib.sh, and run as the dispatcher runs it.
 # `git` is the real one; `gh` and `spoolway` are fakes. Nothing reaches GitHub or the network.
 # Usage: tests/spoolway-materializing-templates.test.sh (needs bash, git and awk)
 
@@ -9,7 +10,7 @@ unset "${!SPOOLWAY_@}" MATERIALIZING_REPO PAGES_DIR PAGES_LOG
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-templates="$repo/claude-plugin/templates/scripts/spoolway"
+types_scripts="$repo/claude-plugin/spoolway/types/scripts/spoolway"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -19,9 +20,9 @@ fail() { printf 'FAIL %s\n' "$1"; [ -n "${2:-}" ] && printf '     %s\n' "$2"; fa
 check() { if eval "$2"; then pass "$1"; else fail "$1" "${3:-}"; fi; }
 
 for s in bind backing drafts gates handover; do
-  f=$templates/materializing-$s.sh
-  check "materializing-$s.sh is executable and carries the written-once header" \
-    '[ -x "$f" ] && sed -n 2p "$f" | grep -q "^# Written once by /spoolway-companion:setup"'
+  f=$types_scripts/materializing-$s.sh
+  check "materializing-$s.sh is executable and carries the shipped-types header" \
+    '[ -x "$f" ] && sed -n 2p "$f" | grep -q "^# Shipped with the Materializing pipeline"'
 done
 
 # --- a consumer -------------------------------------------------------------------------------
@@ -30,7 +31,7 @@ c="$work/consumer"
 home="$work/home"
 mkdir -p "$c/scripts/spoolway" "$c/.spoolway" "$home/queue" "$home/scratch/m1" "$work/bin"
 cp "$repo/claude-plugin/spoolway/types/scripts/spoolway/lib.sh" "$c/scripts/spoolway/"
-cp -p "$templates"/materializing-*.sh "$c/scripts/spoolway/"
+cp -p "$types_scripts"/materializing-*.sh "$c/scripts/spoolway/"
 printf '#!/bin/sh\necho "handover.sh ran"\n' > "$c/scripts/spoolway/handover.sh"
 printf '#!/bin/sh\necho "pins.sh $*"\n' > "$c/scripts/spoolway/pins.sh"
 chmod +x "$c/scripts/spoolway/handover.sh" "$c/scripts/spoolway/pins.sh"
@@ -143,10 +144,14 @@ check "handover runs handover.sh on a change" '[ $status -eq 0 ] && grep -q "han
 # --- gates ------------------------------------------------------------------------------------
 
 task gates; run materializing-gates.sh
-check "gates passes a glossary change and says no gate command is written" '[ $status -eq 0 ] && grep -q "no gate command is written" <<<"$out"' "$out"
+check "gates passes a glossary change and says no gate command is configured" '[ $status -eq 0 ] && grep -q "no MATERIALIZING_GATES is set" <<<"$out"' "$out"
 echo more >> "$c/src.txt" && git -C "$c" commit -q -am "a code change"
 run materializing-gates.sh
 check "gates refuses a change outside the allowed paths, into gates.problems.md" '[ $status -eq 1 ] && grep -q "src.txt" "$S/gates.problems.md"' "$out"
+export MATERIALIZING_ALLOWED='CONTEXT.md src.txt' MATERIALIZING_GATES=true
+run materializing-gates.sh
+check "gates reads MATERIALIZING_GATES and MATERIALIZING_ALLOWED" '[ $status -eq 0 ] && grep -q "gates: true" <<<"$out"' "$out"
+unset MATERIALIZING_ALLOWED MATERIALIZING_GATES
 rm -f "$S/gates.problems.md"; task document; run materializing-gates.sh preview
 check "gates preview runs in document and writes no problems file" '[ $status -eq 1 ] && [ ! -e "$S/gates.problems.md" ]' "$out"
 

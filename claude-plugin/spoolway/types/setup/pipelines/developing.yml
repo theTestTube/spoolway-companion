@@ -136,12 +136,17 @@ steps:
   # Run reports. The objective signals and their thresholds are these flags and nothing
   # else: the script refuses to run without every one, and no lane weighs them.
   #   --blocks 1                the task touched `blocked` at least once
-  #   --implement-arrivals 3    the loop on `implement` was spent: the first pass and both returns
+  #   --implement-arrivals 3    the loop on `implement` was spent: the first pass and both returns,
+  #                             unless every later lap repaired the finding it was sent back for
   #   --environment-failures 1  `checks` failed on an `ENVIRONMENT:` line, not on the code
   #   --spend-usd 20            the run cost more than 20 USD, from the first run on
   #   --spend-median-x 2        or more than twice the median of the earlier runs of this pipeline
   #   --spend-min-runs 5        and `version`, once there are five of them
   #   --doctor-problems 1       `spoolway doctor` reports a problem (its notes do not count)
+  # Decision, repaired laps: a run that arrived at `implement` more than once repaired every
+  # return (`signals` runs only after the final `review` passed), so neither its arrivals nor the
+  # spend against the median, which the extra laps inflate, is a signal. A loop that did not
+  # repair blocks before `signals`, and `blocks` counts it.
   # One more signal is a lane's judgment and cannot be measured here: an urgent finding that does
   # not block the task, which `report` files at once, labelled `P1-high`.
   # Raise `version` when a threshold changes. The step leaves a verdict; `report` files it.
