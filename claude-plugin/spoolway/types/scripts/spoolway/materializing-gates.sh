@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Written once by /spoolway-companion:setup from the companion's template, then yours: the
-# companion never updates it; a later bump prints the template's changes for you to apply.
+# Shipped with the Materializing pipeline in this plugin's types, at the revision
+# .spoolway/plugin.lock records: a retake rewrites it, so it carries no project's specifics. What
+# differs between consumers is read from .spoolway/companion.env.
 #
 # The `gates` step of the Materializing pipeline: what the `document` step wrote passes the
 # repository's own gates before a pull request exists, so review is the only thing left to the
@@ -9,13 +10,13 @@
 # Three things, all of them run so one return can correct them all:
 #
 #   guards   what no gate can see from the tree alone. Nothing changes outside the paths
-#            `ALLOWED` lists below: this pipeline's pull request holds pages and glossary only.
+#            `MATERIALIZING_ALLOWED` lists: this pipeline's pull request holds pages and glossary only.
 #            With `PAGES_DIR` set, no lane moves a drift pin: a page the base has keeps its
 #            `source_commit` and `verified_commit`, and a new page names a commit the base
 #            already holds, since `spoolway stack` squashes every commit this task made into one.
-#   gates    `GATES` below: your repository's own gate command, the part of what CI runs that
-#            applies to pages and glossary. Empty as shipped: the step says no gate is written
-#            and the guards and pages alone decide. Fill it in.
+#   gates    `MATERIALIZING_GATES`: your repository's own gate command, the part of what CI runs
+#            that applies to pages and glossary. Empty by default: the step says no gate is
+#            written and the guards and pages alone decide.
 #   pages    with `PAGES_DIR` set, `pins.sh check all`. A page that is red is answered for in the
 #            record `stale-pages.md`, and the `pin` step moves its pin after the handover.
 #
@@ -41,13 +42,16 @@ PAGES_DIR=${PAGES_DIR#./}
 PAGES_DIR=${PAGES_DIR%/}
 PAGES_LOG=$(companion_env PAGES_LOG)
 
-# The gate command, as words: the part of your CI that applies to what `document` writes, for
-# example (scripts/gates/run.sh lint links). Exit 0 is green, anything else is red.
-GATES=()
+# The gate command, as words, from `MATERIALIZING_GATES` in .spoolway/companion.env: the part of
+# your CI that applies to what `document` writes, for example
+# `MATERIALIZING_GATES=scripts/gates/run.sh lint links`. Exit 0 is green, anything else is red;
+# empty means no gate command is run.
+GATES=($(companion_env MATERIALIZING_GATES))
 
-# The paths this pipeline's pull request may change: a file by its path, a directory by its path
-# with a trailing slash. Add what your page write path also writes (its sources, its index).
-ALLOWED=(CONTEXT.md)
+# The paths this pipeline's pull request may change, from `MATERIALIZING_ALLOWED` in
+# .spoolway/companion.env: a file by its path, a directory by its path with a trailing slash. The
+# default is `CONTEXT.md`; add what your page write path also writes (its sources, its index).
+ALLOWED=($(companion_env MATERIALIZING_ALLOWED CONTEXT.md))
 [ -n "$PAGES_DIR" ] && ALLOWED+=("$PAGES_DIR/")
 [ -n "$PAGES_LOG" ] && ALLOWED+=("${PAGES_LOG#./}")
 
@@ -165,7 +169,7 @@ fi
 # --- the gates ----------------------------------------------------------------------------------
 
 if [ "${#GATES[@]}" -eq 0 ]; then
-  echo "gates: no gate command is written in GATES of scripts/spoolway/materializing-gates.sh; the guards and the pages decide alone"
+  echo "gates: no MATERIALIZING_GATES is set in .spoolway/companion.env; the guards and the pages decide alone"
 else
   echo "gates: ${GATES[*]}"
   rc=0

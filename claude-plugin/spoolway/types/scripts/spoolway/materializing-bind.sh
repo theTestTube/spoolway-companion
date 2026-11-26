@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Written once by /spoolway-companion:setup from the companion's template, then yours: the
-# companion never updates it; a later bump prints the template's changes for you to apply.
+# Shipped with the Materializing pipeline in this plugin's types, at the revision
+# .spoolway/plugin.lock records: a retake rewrites it, so it carries no project's specifics. What
+# differs between consumers is read from .spoolway/companion.env.
 #
 # The `bind` step of the Materializing pipeline: refuses a task that is not bound to an open spec,
 # or that would let a merge close it. Same name in every consumer.
