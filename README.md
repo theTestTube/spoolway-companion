@@ -101,7 +101,6 @@ each, the three-tier rule behind them and how `companion.env` is read are in
 | `scripts/spoolway/checks.sh` | the repository's checks, the same lines as its CI | required |
 | `scripts/spoolway/handover.sh` | push the branch and open the pull request | required |
 | `scripts/spoolway/extra-worktree.sh`, `extra-handover.sh`, `extra-cleanup.sh` | a worktree, a pull request and a cleanup in each extra repository a task's `repos` names | write them to pass at once and block a task naming more than one repository, as this repository's own do |
-| `scripts/spoolway/materializing-bind.sh`, `materializing-backing.sh`, `materializing-drafts.sh`, `materializing-gates.sh`, `materializing-handover.sh` | the Materializing steps' checks and handover, exchanging files with the lanes | required by a consumer that runs Materializing |
 | `.spoolway/companion.env` | `KEY=value` lines read by the shipped scripts (below); an environment variable that is set and not empty wins | each key's own, in the table below |
 | `docs/agents/projects.md` | the projects, the rule for `repos`, and any private feedback repository | the project is the repository itself |
 | `.spoolway/hooks/github.sh` | the issue-tracking hook, copied from `claude-plugin/templates/` | tasks still run; no `spoolway:*` labels, no close on merge, no issue reads |
@@ -119,6 +118,8 @@ each, the three-tier rule behind them and how `companion.env` is read are in
 | `RUN_REPORT_REPO` | `run-report.sh` | where run reports are filed; unset means the run's own repository |
 | `FINDINGS_REPO` | `findings.sh` | where the weekly digest lives; unset means the run's own repository |
 | `MATERIALIZING_REPO` | `/spoolway-companion:setup` only | the repository of Materializing's specs; the prompts read it from `docs/agents/projects.md`, where setup writes it too |
+| `MATERIALIZING_GATES` | `materializing-gates.sh` | the gate command, as words, that the `gates` step runs on what `document` wrote (for example `scripts/gates/run.sh lint links`); unset means no gate command runs |
+| `MATERIALIZING_ALLOWED` | `materializing-gates.sh` | the paths the Materializing pull request may change, space-separated (default `CONTEXT.md`); a directory is its path with a trailing slash, and `PAGES_DIR` and `PAGES_LOG` are added |
 
 `COMPANION_ENV_FILE` names another file than `.spoolway/companion.env`.
 
@@ -168,7 +169,7 @@ the gap needs (Developing, Materializing, Architecting or Feeding-back) under `.
 rollback first proposes unqueueing every task and stops unless the person opts in in words. The
 install, the dispatcher, the `sync` and the reload stay the person's. Its mechanical half is
 `skills/setup/setup.sh` (`detect`, `plan`, `apply`, `labels`, `bump`); a consumer that
-takes Materializing gets its five `materializing-*` scripts from the templates.
+takes Materializing gets its five `materializing-*` scripts with the types.
 
 **`/spoolway-companion:spoolway-repair <task-id>`**, which only a person can start, diagnoses a doomed spoolway task, salvages what cleanup would destroy, and advances or retreats it with the person. has no description and is hidden from the model, so a session that
 never invokes it carries no trace of it. Its mechanical reads live in

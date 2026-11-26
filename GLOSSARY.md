@@ -57,6 +57,12 @@ _Avoid_: retro issue, incident
 An objective measure of a run, compared with a threshold the pipeline sets.
 _Avoid_: metric, smell
 
+**Repaired-lap run**:
+A run that arrived at `implement` more than once and passed the final `review`, so every later lap
+repaired the finding the return was for. It is not a spent loop: it raises no arrivals signal,
+and its spend is not compared with the median, which the extra laps inflate.
+_Avoid_: return run, rework run
+
 **Verdict**:
 What measuring a run's signals leaves: the body of the run report to file, or nothing.
 

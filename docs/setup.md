@@ -45,7 +45,7 @@ It asks, in order, one topic at a time, proposing an answer from what it found:
    The `extra-*` templates serve both topologies: for a multi-repo, setup also writes the
    `extra_repos` and `worktree_root` answers into `.spoolway/companion.env` as `EXTRA_REPOS` and
    `EXTRA_WORKTREE_ROOT`, which they read ([multi-repo.md](multi-repo.md#the-companions-templates)).
-   With Materializing taken, setup also writes its five `materializing-*` scripts.
+   With Materializing taken, the types write its five `materializing-*` scripts.
 
 7. **Memex upkeep**: whether and when `memex index` runs to keep the memory index's vectors
    current (`none`, `hourly`, or `boot`, one pass 3 minutes after the user session starts), and

@@ -131,9 +131,12 @@ The shipped steps `pin` (`pins.sh pin`), `ci` (`ci.sh`), `signals` (`run-report.
 
 ### Materializing
 
-The five `materializing-*` scripts are the consumer's, written once by setup from
-`claude-plugin/templates/scripts/spoolway/`. Each exchanges files with a lane through the
-task's scratch space; the formats below are what the shipped prompts write and read.
+The five `materializing-*` scripts ship with the Materializing pipeline in
+`claude-plugin/spoolway/types/scripts/spoolway/`, so a consumer that takes the pipeline through
+`/spoolway-companion:spoolway-types` has them without writing any. Each exchanges files with a
+lane through the task's scratch space; the formats below are what the shipped prompts write and
+read. `materializing-gates.sh` is the one that reads the consumer: `MATERIALIZING_GATES` and
+`MATERIALIZING_ALLOWED` in `.spoolway/companion.env` ([README](../README.md)).
 
 | Script | Step | Reads | Writes | Fails to |
 |---|---|---|---|---|
