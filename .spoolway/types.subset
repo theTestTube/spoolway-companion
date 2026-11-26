@@ -27,5 +27,10 @@ scripts/spoolway/ci.sh
 scripts/spoolway/collect.sh
 scripts/spoolway/dod.sh
 scripts/spoolway/lib.sh
+scripts/spoolway/materializing-backing.sh
+scripts/spoolway/materializing-bind.sh
+scripts/spoolway/materializing-drafts.sh
+scripts/spoolway/materializing-gates.sh
+scripts/spoolway/materializing-handover.sh
 scripts/spoolway/pins.sh
 scripts/spoolway/run-report.sh

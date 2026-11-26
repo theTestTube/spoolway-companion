@@ -2,7 +2,8 @@
 # pull request with what the interview decided, as documentation that already passed the
 # repository's gates. Model and effort are fixed here and versioned: raise `version` when a step's
 # model, effort or loop changes, so `spoolway eval` compares like with like. Run parameters live
-# in the task document, never here. The `materializing-*` scripts are the consumer's own.
+# in the task document, never here. The `materializing-*` scripts ship from these types; the gates
+# step reads `MATERIALIZING_GATES` and `MATERIALIZING_ALLOWED` from .spoolway/companion.env.
 
 version: "1.3"
 
