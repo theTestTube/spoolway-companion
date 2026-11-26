@@ -39,7 +39,9 @@ its first frontier tickets. Everything below narrows the skill to this pipeline.
   waits for a free slot; it is never run in a fifth.
 - A subagent resolves its research ticket and nothing more: its answer is a comment on it and
   it is closed. Give it the rules of this prompt: Conventional Commits, no AI attribution, no
-  closing keyword before an issue, never ask a question, and none of what "Never" below forbids.
+  closing keyword before an issue, never ask a question, and none of what "Never" below forbids. Tell it too that a package install for
+  research goes outside `$SPOOLWAY_SCRATCH` or not at all: a tree installed there swells the
+  lane's scratch space, which `collect` must copy before the task is done.
 - For each **new frontier ticket** (open, unblocked and unclaimed once the blocking edges are
   wired), draft one Architecting task document (resolve mode): write it to `$SPOOLWAY_SCRATCH`,
   then check and place it. The document starts from `.spoolway/templates/tasks/architecting.md`
@@ -82,6 +84,8 @@ for help.
   `part of #N` or `leaves #N open`.
 - Never queue a task: no `spoolway queue add`, no `spoolway queue` of any kind that writes.
 - Never start a fifth research subagent while four run.
+- Never install packages in the lane's scratch space: a package install for research goes outside
+  `$SPOOLWAY_SCRATCH` or not at all.
 - Never resolve, close or comment on a ticket of the map but the research tickets this chart
   opens on its frontier: a grilling, prototype or task ticket is a resolve-mode task's work,
   later.

@@ -90,6 +90,8 @@ check "the template's chart non-goal follows from the mode table" \
   'grep -qF "resolving any ticket but a research ticket it opened on its frontier" "$tpl" && ! grep -qF "resolving a ticket of the map, which is a resolve-mode task" "$tpl"'
 check "chart owns the research tickets it opens and its Never line allows them" \
   "grep -qF \"Research is chart's own work\" \"\$chart\" && grep -qF \"its answer is a comment on it\" \"\$chart\" && grep -qF \"Never resolve, close or comment on a ticket of the map but the research tickets this chart\" \"\$chart\" && ! grep -qF \"Never resolve a ticket of the map yourself\" \"\$chart\""
+check "chart and its research subagent keep a package install outside the scratch space or not at all" \
+  'grep -qF "Tell it too that a package install for" "$chart" && grep -qF "research goes outside \`\$SPOOLWAY_SCRATCH\` or not at all" "$chart" && grep -qF "Never install packages in the lane" "$chart" && grep -qF "package install for research goes outside" "$chart"'
 check "chart drafts into pending/ and queues none" 'grep -q "pending/" "$chart" && grep -qF "Queue nothing" "$chart" && grep -qF "Never queue a task" "$chart"'
 check "chart copies base: from the task file onto every draft" 'grep -qF "copied from the \`base:\` in this running task" "$chart"'
 check "chart drafts one Architecting resolve-mode task per new frontier ticket" 'grep -qF "one Architecting task document (resolve mode)" "$chart"'
@@ -98,6 +100,8 @@ check "chart hands a repository edit off as a draft Developing task" \
 resolve="$types/prompts/architecting-resolve/PROMPT.md"
 check "resolve cites the mode table and resolves the named ticket whatever its type" \
   'grep -qF "mode table in" "$resolve" && grep -qF "whatever its type" "$resolve"'
+check "resolve and its research subagent keep a package install outside the scratch space or not at all" \
+  'grep -qF "tell it that a package install for" "$resolve" && grep -qF "research goes outside \`\$SPOOLWAY_SCRATCH\` or not at all" "$resolve" && grep -qF "Never install packages in the lane" "$resolve" && grep -qF "package install for research goes outside" "$resolve"'
 check "resolve hands a repository edit off as a draft Developing task and keeps its claim" \
   'grep -qF "draft a **Developing** task document" "$resolve" && grep -qF "pipeline: developing" "$resolve" && grep -qF "keep your claim, close" "$resolve" && grep -qF "write no Decisions-so-far line" "$resolve"'
 check "resolve and chart still forbid edit, commit and push" \
