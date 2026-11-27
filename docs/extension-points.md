@@ -230,6 +230,11 @@ Each `\t` is a literal tab. The fields are:
   `base`, GREEN when it is `none`.
 - `compile-proof` — `yes`, `no` or `n/a`.
 
+The closing line and the exit code answer for the branch: the gate exits 1 (`=== RED`) when a record
+is owed by `branch`, and 0 (`=== GREEN`) when its red records are all owed by `base`. `pins.sh pin`
+runs the gate again after moving the pins and fails on a non-zero exit. It never moves the pin of a
+page owed by `base`.
+
 A consumer without a wiki names `scripts/spoolway/stale-pages-stub.sh` as `PAGES_GATE`: it answers
 the records mode with an empty page set and GREEN. The record the lanes write is `stale-pages.md`
 in the task's scratch space, one line per page:

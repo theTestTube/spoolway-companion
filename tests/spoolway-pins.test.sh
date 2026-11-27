@@ -134,5 +134,54 @@ run
 check "a conflict beyond the pin lines fails, naming the file" '[ $rc -eq 1 ] && grep -q "more than the pages. pin lines" "$work/err" && grep -q "other.txt" "$work/err"' "rc=$rc $(cat "$work/err")"
 check "nothing was merged or pushed" '[ "$(git -C "$app" rev-parse HEAD)" = "$top" ] && ! grep -q "pin:.*pushed" "$work/out"'
 
+# --- A red the base carries: reported, its page never pinned -----------------------------------
+
+# base_gate <name> <rc-when-only-base>: adds pages/foreign.md, a page with no `verified_commit`
+# that the branch never touches, and a gate that always reports it as owed by the base. With no
+# branch-owed record left, the gate exits <rc-when-only-base>.
+base_gate() {
+  setup "$1"
+  printf -- '---\nsource_commit: basepin\n---\n\nForeign.\n' > "$app/pages/foreign.md"
+  cat > "$app/gate.sh" <<GATE
+#!/bin/sh
+red=0
+v=\$(sed -n 's/^verified_commit: //p' pages/example.md | head -1)
+if [ -f branch-owes ] && { ! git rev-parse -q --verify "\$v^{commit}" > /dev/null 2>&1 || ! git diff --quiet "\$v" -- code.txt; }; then
+  red=1
+  printf 'example\t\tfalse\t\tcode.txt\tbranch\tn/a\n'
+fi
+printf 'foreign\t\tfalse\t\tother.txt\tbase\tn/a\n'
+if [ "\$red" = 1 ]; then echo '=== RED'; exit 1; fi
+if [ $2 = 0 ]; then echo '=== GREEN'; else echo '=== RED'; fi
+exit $2
+GATE
+}
+foreign_kept() { ! grep -q '^verified' "$app/pages/foreign.md" && git -C "$app" diff --quiet main HEAD -- pages/foreign.md; }
+
+base_gate base-only 1
+git -C "$app" add -A
+git -C "$app" commit -q -m "docs: a page the base owes"
+git -C "$app" push -q origin main
+a_branch
+top=$(git -C "$app" rev-parse HEAD)
+run
+check "a base-only red passes the pin step" '[ $rc -eq 0 ]' "rc=$rc $(cat "$work/out" "$work/err")"
+check "a base-only red leaves the page without a pin" 'foreign_kept' "$(cat "$app/pages/foreign.md")"
+check "a base-only red makes no commit" '[ "$(git -C "$app" rev-parse HEAD)" = "$top" ]' "$(git -C "$app" log --oneline -4)"
+check "the output names the base red" 'grep -q "foreign is red from the base" "$work/out"' "$(cat "$work/out")"
+
+base_gate base-mixed 0
+: > "$app/branch-owes"
+git -C "$app" add -A
+git -C "$app" commit -q -m "docs: a page the base owes"
+git -C "$app" push -q origin main
+a_branch
+record
+run
+check "a branch red beside a base red passes the pin step" '[ $rc -eq 0 ]' "rc=$rc $(cat "$work/out" "$work/err")"
+check "the branch-owed page is pinned to the squashed commit" 'grep -q "verified_commit: $squashed" "$app/pages/example.md"' "$(cat "$app/pages/example.md")"
+check "the base-owed page beside it keeps no pin" 'foreign_kept' "$(cat "$app/pages/foreign.md")"
+check "the output still names the base red" 'grep -q "foreign is red from the base" "$work/out"' "$(cat "$work/out")"
+
 printf '\n%s failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]
