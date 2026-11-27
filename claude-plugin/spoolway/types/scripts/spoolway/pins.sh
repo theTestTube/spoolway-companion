@@ -39,7 +39,9 @@
 # since the pin, `;` separated, empty when none; `owed-by` is `branch` (this branch made the page
 # stale), `base` (only the base carries it, reported and never blocking) or `none` (not stale); and
 # `compile-proof` is `yes`, `no` or `n/a`. A record is RED when `owed-by` is `branch` or `base`,
-# GREEN when it is `none`. The off-history flag and the compile proof are fields, so no gate
+# GREEN when it is `none`. The closing line and the exit code answer for the branch: the gate exits 1
+# (`=== RED`) when a record is owed by `branch`, and 0 (`=== GREEN`) when its red records are all
+# owed by `base`. The `pin` step moves no pin on a page owed by `base`. The off-history flag and the compile proof are fields, so no gate
 # message is ever read as a cited path. A gate that cannot speak the contract, or a repo with no
 # wiki, names `scripts/spoolway/stale-pages-stub.sh` as PAGES_GATE.
 #
@@ -567,10 +569,11 @@ if [ "$gate_rc" -eq 1 ]; then
   no_red_named
   whole_page_reds
   while IFS= read -r rec; do
-    if judge "$rec"; then
-      pages+=("$PAGES_DIR/${rec%%$'\t'*}.md")
-    else
+    if ! judge "$rec"; then
       refused=$((refused + 1))
+    elif [ "$(printf '%s\n' "$rec" | cut -f6)" != base ]; then
+      # A page the base owes was never declared: said by `judge`, never pinned.
+      pages+=("$PAGES_DIR/${rec%%$'\t'*}.md")
     fi
   done < <(reds)
 fi
