@@ -88,5 +88,8 @@ session_reuse_ctx = 20
 session_blocked_ctx = 40
 permission_mode = "auto"
 
+[agents.pi]
+kind = "pi"
+
 [models."claude-*"]
 prompt_cache_ttl = "5m"
