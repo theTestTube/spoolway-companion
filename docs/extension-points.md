@@ -103,10 +103,14 @@ the consumer's: the companion never writes or updates it.
   is named passes at once: `step_skipped "$SPOOLWAY_TASK_FILE" <step>`.
 - **Environment.** spoolway runs a command step in the task's worktree with `SPOOLWAY_TASK_FILE`
   naming the task document. It does not hand a command step `SPOOLWAY_SCRATCH`; `task_scratch
-  "$SPOOLWAY_TASK_FILE"` derives the task's scratch space, where the lanes leave their files.
+  "$SPOOLWAY_TASK_FILE"` derives the task's scratch space, where the lanes leave their files. A
+  lane resumed after a dispatcher restart, a reboot or a usage-limit stop has neither variable:
+  the shipped `scripts/spoolway/lane-env.sh` infers them from the worktree path, and the plugin's
+  `lane-env` hook writes them to `CLAUDE_ENV_FILE` before the prompt's first use.
 - **`lib.sh`.** The shipped `scripts/spoolway/lib.sh` is meant to be sourced by consumer scripts:
   `companion_env`, `frontmatter_value`, `frontmatter_list`, `frontmatter_list_has`,
-  `frontmatter_has_key`, `step_skipped`, `own_step`, `no_arguments`, `task_scratch`, `task_base`,
+  `frontmatter_has_key`, `step_skipped`, `own_step`, `no_arguments`, `lane_root`, `lane_id`,
+  `lane_task_file`, `lane_env`, `lane_scratch`, `require_scratch`, `task_scratch`, `task_base`,
   `task_starts_from`, `task_unchanged`, `branch_base`, `on_branch`, `open_pull_request`,
   `conventional_title`, `closing_keywords`, `strip_ai_trailer`, `issue_url` and `issue_repo`. Its
   header comment on each says what it does.

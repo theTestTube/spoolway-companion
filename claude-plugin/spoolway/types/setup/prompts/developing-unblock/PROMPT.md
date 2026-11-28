@@ -1,5 +1,15 @@
 # developing-unblock
 
+## The lane environment
+
+The harness sets the task's environment. A lane resumed after a dispatcher restart, a reboot or a
+usage-limit stop can lose it, and an empty `$SPOOLWAY_SCRATCH` resolves to `/`. Before the first
+use, restore it from the worktree and stop if that fails:
+
+    . scripts/spoolway/lane-env.sh || exit 1
+
+Every command that reads or writes the scratch space begins with that line, in its own shell.
+
 A task of the Developing pipeline stopped during a run nobody is watching. You get one attempt at
 clearing it. This task only: the rest of the run is not yours.
 

@@ -125,6 +125,16 @@ each, the three-tier rule behind them and how `companion.env` is read are in
 
 ## Hooks
 
+`claude-plugin/hooks/lane-env` restores the lane environment on **SessionStart** (startup, resume,
+clear, compact). A lane started by the dispatcher is handed `SPOOLWAY_TASK`, `SPOOLWAY_TASK_FILE`,
+`SPOOLWAY_SCRATCH`, `SPOOLWAY_WORKTREE` and `SPOOLWAY_REPO`; a lane resumed after a dispatcher
+restart, a reboot or a usage-limit stop can lose them, and an empty `SPOOLWAY_SCRATCH` resolves to
+`/`. The hook infers them from the worktree path (`<home>/worktrees/task-<id>`) and writes them to
+`CLAUDE_ENV_FILE`, which Claude Code sources into the lane's Bash tool. It does nothing outside a
+lane worktree, keeps any value already set, and never blocks the session. The same resolver ships
+as `scripts/spoolway/lane-env.sh` for a prompt or a script to source. Run the tests with
+`tests/spoolway-lane-env.test.sh` (needs `bash`, `git` and `jq`).
+
 `claude-plugin/hooks/pin-drift` compares the installed commit of `spoolway-companion`
 (`gitCommitSha` of its user-scope record in `$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json`)
 with the `revision` in the project's `.spoolway/plugin.lock`. It reads nothing from
