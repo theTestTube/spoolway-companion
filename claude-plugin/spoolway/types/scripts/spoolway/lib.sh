@@ -214,15 +214,97 @@ frontmatter_has_key() {
   ' "$1"
 }
 
+# lane_root [<dir>]: the worktree root of the lane that runs in <dir>, when it sits in a worktree
+# named `<home>/worktrees/task-<id>`. Nothing when it does not: a command step runs in the main
+# checkout, and a person's session in the project's own tree, and neither is a lane.
+lane_root() {
+  local dir=${1:-$PWD} root
+  root=$(git -C "$dir" rev-parse --show-toplevel 2> /dev/null) || root=$dir
+  case $root in */worktrees/task-*) printf '%s\n' "$root" ;; *) return 1 ;; esac
+}
+
+# lane_id [<dir>]: the task id the lane worktree in <dir> names, `task-<id>` without the prefix.
+lane_id() {
+  local root
+  root=$(lane_root "${1:-$PWD}") || return 1
+  printf '%s\n' "${root##*/task-}"
+}
+
+# lane_task_file [<dir>]: the task file of the lane worktree in <dir>, `queue/<id>.md` in its
+# home, or `archive/<id>.md` once the task is archived. Nothing when neither exists.
+lane_task_file() {
+  local root home id file
+  root=$(lane_root "${1:-$PWD}") || return 1
+  home=$(dirname "$(dirname "$root")")
+  id=${root##*/}; id=${id#task-}
+  file=$home/queue/$id.md
+  [ -f "$file" ] || file=$home/archive/$id.md
+  [ -f "$file" ] || return 1
+  printf '%s\n' "$file"
+}
+
+# lane_env [<dir>]: the lane's own environment, inferred from the worktree path when spoolway did
+# not hand it over — a lane resumed after a dispatcher restart, a reboot or a usage-limit stop.
+# <dir> defaults to the current directory. Prints `export` lines for SPOOLWAY_TASK,
+# SPOOLWAY_TASK_FILE, SPOOLWAY_SCRATCH, SPOOLWAY_WORKTREE and SPOOLWAY_REPO, so a caller sets them
+# with `eval "$(lane_env)"`. Prints nothing and fails when <dir> is not a lane worktree or the
+# task file is missing. A value already set wins.
+lane_env() {
+  local root home id task_file repo
+  root=$(lane_root "${1:-$PWD}") || return 1
+  home=$(dirname "$(dirname "$root")")
+  id=${root##*/}; id=${id#task-}
+  task_file=$home/queue/$id.md
+  [ -f "$task_file" ] || task_file=$home/archive/$id.md
+  [ -f "$task_file" ] || return 1
+  repo=$(sed -n 's/^root[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$home/project.toml" 2> /dev/null | tail -n 1)
+  repo=${repo:-${SPOOLWAY_REPO:-}}
+  printf 'export SPOOLWAY_TASK=%q\n' "${SPOOLWAY_TASK:-$id}"
+  printf 'export SPOOLWAY_TASK_FILE=%q\n' "${SPOOLWAY_TASK_FILE:-$task_file}"
+  printf 'export SPOOLWAY_SCRATCH=%q\n' "${SPOOLWAY_SCRATCH:-$home/scratch/$id}"
+  printf 'export SPOOLWAY_WORKTREE=%q\n' "${SPOOLWAY_WORKTREE:-$root}"
+  [ -n "$repo" ] && printf 'export SPOOLWAY_REPO=%q\n' "$repo"
+  return 0
+}
+
+# lane_scratch [<dir>]: the task's scratch space, inferred from the worktree path in <dir>.
+lane_scratch() {
+  local root home id
+  root=$(lane_root "${1:-$PWD}") || return 1
+  home=$(dirname "$(dirname "$root")")
+  id=${root##*/}; id=${id#task-}
+  printf '%s\n' "$home/scratch/$id"
+}
+
+# require_scratch: the task's scratch space, or a loud failure. A caller that writes under
+# `$SPOOLWAY_SCRATCH` runs this first: an empty value used to resolve to `/`.
+require_scratch() {
+  if [ -z "${SPOOLWAY_SCRATCH:-}" ]; then
+    echo "require_scratch: SPOOLWAY_SCRATCH is empty; restore the lane environment with \`eval \"\$(scripts/spoolway/lane-env.sh)\"\` before writing to the scratch space" >&2
+    return 1
+  fi
+  printf '%s\n' "$SPOOLWAY_SCRATCH"
+}
+
 # task_scratch <task-file>: the task's scratch space, `scratch/<id>` in the project's home, where
 # the task file sits one level in (`queue/<id>.md`). A lane is handed the same directory as
 # SPOOLWAY_SCRATCH and a command step is handed nothing, so a script a lane runs takes the lane's
-# and a command step derives it from the task file.
+# and a command step derives it from the task file. Fails loudly when neither names one, so a
+# caller never writes under an empty path.
 task_scratch() {
-  local home
+  local home id
   if [ -n "${SPOOLWAY_SCRATCH:-}" ]; then echo "$SPOOLWAY_SCRATCH"; return; fi
+  if [ -z "${1:-}" ] || [ ! -f "$1" ]; then
+    echo "task_scratch: no task file and SPOOLWAY_SCRATCH is empty" >&2
+    return 1
+  fi
   home=$(cd "$(dirname "$1")/.." && pwd)
-  echo "$home/scratch/${SPOOLWAY_TASK:-$(frontmatter_value "$1" id)}"
+  id=${SPOOLWAY_TASK:-$(frontmatter_value "$1" id)}
+  if [ -z "$id" ]; then
+    echo "task_scratch: the task file names no id and SPOOLWAY_TASK is empty" >&2
+    return 1
+  fi
+  echo "$home/scratch/$id"
 }
 
 # issue_url <text>: succeeds when the text is the URL of one GitHub issue and nothing else.

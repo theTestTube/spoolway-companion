@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Lane-environment hook.
+#
+# A lane started by the dispatcher is handed SPOOLWAY_TASK, SPOOLWAY_TASK_FILE, SPOOLWAY_SCRATCH,
+# SPOOLWAY_WORKTREE and SPOOLWAY_REPO. A lane resumed after a dispatcher restart, a reboot or a
+# usage-limit stop can lose them, and an empty SPOOLWAY_SCRATCH resolves to `/`. On SessionStart
+# this hook infers them from the worktree path and writes them to CLAUDE_ENV_FILE, which Claude
+# Code sources into the lane's Bash tool. It does nothing outside a lane worktree, and keeps any
+# value already set. It never blocks the session: every path exits 0.
+
+set -u
+
+input="$(cat 2>/dev/null || true)"
+cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)"
+[ -n "$cwd" ] || cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
+
+root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=/dev/null
+. "$root/spoolway/types/scripts/spoolway/lib.sh"
+
+env="$(lane_env "$cwd")" || exit 0
+[ -n "$env" ] || exit 0
+[ -n "${CLAUDE_ENV_FILE:-}" ] || exit 0
+printf '%s\n' "$env" >> "$CLAUDE_ENV_FILE"
+exit 0

@@ -6,6 +6,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/lane-env\"",
+            "timeout": 60
+          },
+          {
+            "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pin-drift\" session-start",
             "timeout": 60
           }

@@ -1,5 +1,15 @@
 # architecting-report
 
+## The lane environment
+
+The harness sets the task's environment. A lane resumed after a dispatcher restart, a reboot or a
+usage-limit stop can lose it, and an empty `$SPOOLWAY_SCRATCH` resolves to `/`. Before the first
+use, restore it from the worktree and stop if that fails:
+
+    . scripts/spoolway/lane-env.sh || exit 1
+
+Every command that reads or writes the scratch space begins with that line, in its own shell.
+
 The message that opened this lane started the `retro` skill. Your own session is new and holds
 nothing worth a retrospective: the session to look back on is this task's own. Everything below
 narrows the skill to this pipeline.
@@ -74,8 +84,10 @@ second report for one run.
 
 ## If your report is refused
 
-The command you finish with can itself be refused. Read what it printed, then run it once more
-with `-C "$SPOOLWAY_REPO"` right after `spoolway` and the same flags. If that is refused too,
+The command you finish with can itself be refused. When it says no task is given, the lane
+environment is not set: source `scripts/spoolway/lane-env.sh` first, which infers the task id
+from the worktree. Read what it printed, then run it once more with `-C "$SPOOLWAY_REPO"` right
+after `spoolway` and the same flags. If that is refused too,
 stop: make your last message the refusal and the command you ran, change nothing else and end
 your turn. A person reads the pane. Never work around a refusal, and never ask another session
 for help.
