@@ -178,7 +178,12 @@ read. `materializing-gates.sh` is the one that reads the consumer: `MATERIALIZIN
   bound by `ticket:` to its ticket's full URL, on `pipeline: developing`, with `base:`, a
   Conventional Commits title, no `close_on_merge` and no closing keyword; its title and `repos`
   matching the ticket's line in the grill's `breakdown.md`; and `spoolway task contract --from
-  <dir>` accepting the set. It never queues anything. What it refuses goes to `drafts.problems.md`,
+  <dir>` accepting the set. The shipped script also refuses contradictory acceptance criteria. A
+  criterion is machine-checkable when it names a path in backticks and pins backtick-quoted
+  `key: value` facts to it; two criteria may not pin one key of one path to different values, and
+  a pinned task document (a path with both `id:` and `pipeline:`) must be one `spoolway task
+  contract` accepts. The check lives in the cut, not in a separate spec pass: the drafts are in
+  hand there, and a refused draft never reaches a lane. It never queues anything. What it refuses goes to `drafts.problems.md`,
   which the lane reads when it is sent back.
 - **`gates`** runs the repository's own gates on what `document` wrote, plus guards no gate sees
   from the tree alone (nothing changed outside where decisions and terms are recorded; no lane
