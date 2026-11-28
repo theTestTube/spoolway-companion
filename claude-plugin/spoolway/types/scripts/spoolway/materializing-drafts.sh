@@ -33,6 +33,15 @@
 #
 # Writing a document into `pending/` does not queue it: a person selects the group on the queue
 # screen. This script never calls `spoolway queue` and never writes under `queue/`.
+#
+# Contradictory acceptance criteria are caught here, at cut time, rather than at `implement`.
+# A criterion is machine-checkable when it names a path in backticks and pins one or more
+# backtick-quoted `key: value` facts to it. The step refuses the draft, naming the
+# contradiction, when two criteria pin one key of one path to different values, or when a
+# criterion pins a task document (a path with both `id:` and `pipeline:`) whose content the
+# machine's own `spoolway task contract` refuses. The decision that the check lives in this cut,
+# and not in a separate spec pass, is recorded in the plugin's docs/extension-points.md.
+#
 # On any problem nothing is written, every reason goes to `drafts.problems.md` in the scratch
 # space, and the step fails back to `tickets`.
 set -euo pipefail
@@ -152,6 +161,93 @@ against_breakdown() {
   [ "$repos" = "${approved_repos[$title]}" ] || problem "$id.md: \`repos\` is $repos, and the breakdown approved ${approved_repos[$title]}. Carry the approved repositories, or block naming the ticket"
 }
 
+# criteria_assertions <doc>: `path<TAB>key<TAB>value` for each machine-checkable acceptance
+# criterion: a criterion names its path in backticks and pins backtick-quoted `key: value` facts
+# to it. Only the `## Acceptance criteria` section is read, and a fact with no path on its line is
+# skipped, so an argument or a command in the section is never taken for one.
+criteria_assertions() {
+  awk '
+    /^## Acceptance criteria[ \t\r]*$/ { inside = 1; next }
+    inside && /^## / { inside = 0 }
+    !inside { next }
+    {
+      n = split($0, parts, "`")
+      path = ""
+      for (i = 2; i <= n; i += 2) {
+        token = parts[i]
+        if (path == "" && (token ~ /\// || token ~ /\.(md|markdown|ts|tsx|js|jsx|json|ya?ml|sh|py|go|toml)$/)) path = token
+      }
+      if (path == "") next
+      for (i = 2; i <= n; i += 2) {
+        token = parts[i]
+        if (token ~ /^[a-z][a-z0-9_]*: .+$/) {
+          key = token; sub(/:.*/, "", key)
+          val = token; sub(/^[a-z][a-z0-9_]*: /, "", val)
+          print path "\t" key "\t" val
+        }
+      }
+    }
+  ' "$1"
+}
+
+# criteria_problems <id> <doc>: the draft's machine-checkable acceptance criteria must be able to
+# hold together. A pair that pins one key of one path to two values is a contradiction. So is a
+# criterion that pins a task document the machine's own contract refuses: the step builds the
+# document the criterion asserts, from the facts it pins, and runs `spoolway task contract` on it,
+# naming the criterion and the refusal. A refusal that does not name the pinned id is not this
+# criterion's, and is ignored.
+criteria_problems() {
+  local id=$1 doc=$2 facts path key value pinned dir out first
+  facts=$(mktemp) || return 0
+  criteria_assertions "$doc" > "$facts"
+
+  # Two criteria pin one key of one path to two values.
+  while IFS=$'\t' read -r path key pinned value; do
+    [ -n "$path" ] || continue
+    problem "$id.md: its acceptance criteria contradict: \`$path\` pins \`$key:\` to both \"$pinned\" and \"$value\""
+  done < <(awk -F'\t' '
+    { k = $1 "\t" $2
+      if (!(k in seen)) seen[k] = $3
+      else if (seen[k] != $3 && !(k in said)) { said[k] = 1; print $1 "\t" $2 "\t" seen[k] "\t" $3 } }
+  ' "$facts")
+
+  declare -A pinned_by=()
+  while IFS=$'\t' read -r path key value; do
+    [ -n "$path" ] || continue
+    pinned_by["$path"$'\t'"$key"]=$value
+  done < "$facts"
+  while read -r path; do
+    [ -n "$path" ] || continue
+    local pinned_id=${pinned_by["$path"$'\t'id]:-} pinned_pipeline=${pinned_by["$path"$'\t'pipeline]:-}
+    [ -n "$pinned_id" ] && [ -n "$pinned_pipeline" ] || continue
+    local pinned_group=${pinned_by["$path"$'\t'group]:-$(frontmatter_value "$doc" group)}
+    local pinned_base=${pinned_by["$path"$'\t'base]:-$(frontmatter_value "$doc" base)}
+    local pinned_close=${pinned_by["$path"$'\t'close_on_merge]:-}
+    dir=$(mktemp -d) || continue
+    {
+      echo '---'
+      echo "id: $pinned_id"
+      echo "title: 'chore(demo): pinned document stub'"
+      echo "group: $pinned_group"
+      echo 'group_description: pinned document stub'
+      echo "pipeline: $pinned_pipeline"
+      echo "base: $pinned_base"
+      [ -z "$pinned_close" ] || echo "close_on_merge: $pinned_close"
+      echo '---'
+      echo
+      echo '## Context'
+      echo
+      echo '- a criterion of the draft pins this document; the body is a stub'
+    } > "$dir/pinned.md"
+    if ! out=$(spoolway -C "${SPOOLWAY_REPO:-.}" task contract --from "$dir" < /dev/null 2>&1) && printf '%s' "$out" | grep -qF -- "$pinned_id"; then
+      first=$(printf '%s\n' "$out" | grep -F -- "$pinned_id" | head -1)
+      problem "$id.md: its acceptance criteria contradict the task contract: a criterion pins \`$path\` with \`id: $pinned_id\`, and the contract refuses it: $first"
+    fi
+    rm -rf "$dir"
+  done < <(awk -F'\t' '{ print $1 }' "$facts" | LC_ALL=C sort -u)
+  rm -f "$facts"
+}
+
 declare -A seen_ticket=() named_draft=()
 count=0
 while IFS= read -r line || [ -n "$line" ]; do
@@ -190,6 +286,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   if frontmatter_has_key "$doc" close_on_merge; then problem "$draft.md: carries \`close_on_merge\`, which is for a task bound to a spec; a ticket closes when its pull request merges"; fi
   if ! why=$(conventional_title "$(frontmatter_value "$doc" title)"); then problem "$draft.md: the title is $why"; fi
   against_breakdown "$draft" "$doc"
+  criteria_problems "$draft" "$doc"
   if lines=$(closing_keywords "$doc"); then problem "$draft.md: the body has a closing keyword before an issue, which the handover step refuses: $(printf '%s' "$lines" | head -1)"; fi
 done < "$tickets"
 
